@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>F&O Analyzer — NIFTY & SENSEX</title>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     /* ===== CSS Variables ===== */
     :root {
@@ -562,6 +563,74 @@
     .algo-ind-chip span.down { color: var(--red); }
     .algo-ind-chip span.neut { color: var(--yellow); }
 
+    /* ===== Advanced Tab ===== */
+    .adv-stab {
+      padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      background: var(--bg-card2); border: 1px solid var(--border); color: var(--text-muted);
+      cursor: pointer; transition: all 0.15s;
+    }
+    .adv-stab:hover { color: var(--text); border-color: var(--blue); }
+    .adv-stab.active { background: var(--blue); color: #000; border-color: var(--blue); }
+    .adv-panel { display: none; }
+    .adv-panel.active { display: block; }
+
+    /* GEX */
+    .gex-summary-row { display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px; }
+    .gex-wall-row { display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(33,38,45,.4); }
+    .gex-wall-strike { font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--text-bright); }
+    .gex-wall-val { font-family:var(--font-mono);font-size:12px; }
+
+    /* OI Heatmap */
+    .heatmap-row { display:grid;grid-template-columns:90px 1fr 80px 80px 1fr 90px 100px;gap:4px;align-items:center;padding:3px 0;border-bottom:1px solid rgba(33,38,45,.3); }
+    .heatmap-header { font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);padding:6px 0;border-bottom:2px solid var(--border); }
+    .hm-bar { height:12px;border-radius:2px;transition:width .3s; }
+    .hm-strike { font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--text-bright);text-align:center; }
+    .hm-val { font-family:var(--font-mono);font-size:11px;text-align:right; }
+    .hm-tag { font-size:10px;font-weight:700;padding:2px 6px;border-radius:8px;text-align:center; }
+    .hm-tag.SR { background:rgba(0,217,100,.15);color:var(--green); }
+    .hm-tag.RS { background:rgba(255,71,87,.15);color:var(--red); }
+    .hm-tag.S  { background:rgba(0,217,100,.08);color:var(--green); }
+    .hm-tag.R  { background:rgba(255,71,87,.08);color:var(--red); }
+
+    /* MTF */
+    .mtf-row { display:grid;grid-template-columns:80px 110px 60px 80px 1fr;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border); }
+    .mtf-tf { font-size:13px;font-weight:700;color:var(--text-bright); }
+    .mtf-bias { font-size:12px;font-weight:700;padding:3px 10px;border-radius:10px;text-align:center; }
+    .mtf-bias.BULLISH { background:rgba(0,217,100,.15);color:var(--green); }
+    .mtf-bias.BEARISH { background:rgba(255,71,87,.15);color:var(--red); }
+    .mtf-bias.NEUTRAL { background:rgba(255,215,0,.15);color:var(--yellow); }
+    .mtf-bias.MIXED   { background:rgba(110,118,129,.15);color:var(--text-muted); }
+    .mtf-score { font-family:var(--font-mono);font-size:13px;font-weight:700;text-align:center; }
+    .mtf-rsi { font-family:var(--font-mono);font-size:12px;color:var(--text-muted); }
+    .mtf-details { display:flex;gap:6px;flex-wrap:wrap; }
+    .mtf-chip { font-size:10px;background:var(--bg-card2);border:1px solid var(--border);padding:2px 7px;border-radius:8px; }
+
+    /* Backtest */
+    .bt-stat { background:var(--bg-card2);border:1px solid var(--border);border-radius:8px;padding:12px 14px; }
+    .bt-stat .lbl { font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--text-muted); }
+    .bt-stat .val { font-family:var(--font-mono);font-size:20px;font-weight:700;margin-top:4px; }
+
+    /* Calendar */
+    .cal-event { display:flex;gap:14px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border); }
+    .cal-date { font-family:var(--font-mono);font-size:12px;color:var(--text-muted);min-width:90px; }
+    .cal-badge { font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;white-space:nowrap; }
+    .cal-badge.HIGH    { background:rgba(255,71,87,.15);color:var(--red); }
+    .cal-badge.MEDIUM  { background:rgba(255,215,0,.15);color:var(--yellow); }
+    .cal-badge.EXTREME { background:rgba(188,140,255,.2);color:var(--purple);animation:pulse 2s infinite; }
+    .cal-event-name { font-size:13px;font-weight:600;color:var(--text-bright); }
+    .cal-days-away  { font-size:11px;color:var(--text-muted); }
+
+    /* IV Summary */
+    .iv-stat { display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px; }
+    .iv-stat .lbl { color:var(--text-muted); }
+    .iv-stat .val { font-family:var(--font-mono);font-weight:600; }
+    .iv-gauge { width:100%;height:10px;background:var(--border);border-radius:5px;margin:10px 0;overflow:hidden; }
+    .iv-gauge-fill { height:100%;border-radius:5px;transition:width .5s; }
+
+    /* Payoff details */
+    .payoff-leg { display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(33,38,45,.4);font-size:12px; }
+    .payoff-stat { display:flex;justify-content:space-between;padding:6px 0;font-size:12px; }
+
     .algo-order-btn {
       flex: 1;
       padding: 9px 14px;
@@ -646,6 +715,9 @@
       </div>
       <div class="nav-item" onclick="switchTab('algo')" data-tab="algo">
         <span class="nav-icon">🤖</span> Algo
+      </div>
+      <div class="nav-item" onclick="switchTab('advanced')" data-tab="advanced">
+        <span class="nav-icon">🔬</span> Advanced
       </div>
     </nav>
   </aside>
@@ -1060,6 +1132,128 @@
       </div>
     </div>
 
+    <!-- ===== ADVANCED TAB ===== -->
+    <div class="tab-panel" id="tab-advanced">
+      <!-- Controls -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+        <h2 style="font-size:15px;font-weight:700;color:var(--text-bright);">🔬 Advanced Analytics</h2>
+        <div style="display:flex;gap:6px;margin-left:auto;">
+          <button class="index-btn active" id="adv-nifty-btn"   onclick="setAdvIndex('NIFTY')"  >NIFTY</button>
+          <button class="index-btn"        id="adv-sensex-btn"  onclick="setAdvIndex('SENSEX')" >SENSEX</button>
+        </div>
+        <button class="interval-btn active" onclick="loadAdvanced()">↻ Refresh</button>
+      </div>
+
+      <!-- Sub-tabs -->
+      <div style="display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap;" id="adv-subtabs">
+        <button class="adv-stab active" onclick="switchAdvTab('gex')">📊 GEX Map</button>
+        <button class="adv-stab" onclick="switchAdvTab('heatmap')">🌡️ OI Heatmap</button>
+        <button class="adv-stab" onclick="switchAdvTab('iv')">📐 IV Surface</button>
+        <button class="adv-stab" onclick="switchAdvTab('mtf')">⏱️ MTF Signals</button>
+        <button class="adv-stab" onclick="switchAdvTab('payoff')">💹 Strategy P&L</button>
+        <button class="adv-stab" onclick="switchAdvTab('backtest')">🧪 Backtest</button>
+        <button class="adv-stab" onclick="switchAdvTab('calendar')">📅 Calendar</button>
+      </div>
+
+      <!-- GEX Map -->
+      <div class="adv-panel active" id="adv-gex">
+        <div class="grid-2 gap-3" style="grid-template-columns:1fr 320px">
+          <div class="card">
+            <div class="card-title">Gamma Exposure (GEX) by Strike</div>
+            <canvas id="gex-chart" height="300"></canvas>
+          </div>
+          <div>
+            <div class="card" style="margin-bottom:10px">
+              <div class="card-title">GEX Summary</div>
+              <div id="gex-summary"><div class="loading-overlay"><div class="spinner"></div></div></div>
+            </div>
+            <div class="card">
+              <div class="card-title">Top GEX Walls</div>
+              <div id="gex-walls"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- OI Heatmap -->
+      <div class="adv-panel" id="adv-heatmap">
+        <div class="card">
+          <div class="card-title">OI Change Heatmap — Support &amp; Resistance Walls</div>
+          <div style="overflow-x:auto"><div id="oi-heatmap-grid"></div></div>
+        </div>
+      </div>
+
+      <!-- IV Surface -->
+      <div class="adv-panel" id="adv-iv">
+        <div class="grid-2 gap-3">
+          <div class="card">
+            <div class="card-title">IV Smile / Skew by Strike</div>
+            <canvas id="iv-chart" height="280"></canvas>
+          </div>
+          <div class="card">
+            <div class="card-title">IV Analytics</div>
+            <div id="iv-summary"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MTF Signals -->
+      <div class="adv-panel" id="adv-mtf">
+        <div class="card">
+          <div class="card-title">Multi-Timeframe Signal Alignment</div>
+          <div id="mtf-overall" style="margin-bottom:14px;font-size:15px;font-weight:700;text-align:center;padding:10px;border-radius:8px;background:var(--bg-card2);">Loading…</div>
+          <div id="mtf-grid"></div>
+        </div>
+      </div>
+
+      <!-- Strategy Payoff -->
+      <div class="adv-panel" id="adv-payoff">
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+          <select id="payoff-strategy" class="expiry-select" onchange="loadPayoff()">
+            <option value="iron_condor">Iron Condor</option>
+            <option value="straddle">Short Straddle</option>
+            <option value="strangle">Short Strangle</option>
+            <option value="bull_call_spread">Bull Call Spread</option>
+            <option value="bear_put_spread">Bear Put Spread</option>
+            <option value="butterfly">Long Butterfly</option>
+          </select>
+        </div>
+        <div class="grid-2 gap-3" style="grid-template-columns:1fr 300px">
+          <div class="card">
+            <div class="card-title" id="payoff-name">Strategy P&L at Expiry</div>
+            <canvas id="payoff-chart" height="280"></canvas>
+          </div>
+          <div class="card">
+            <div class="card-title">Strategy Details</div>
+            <div id="payoff-details"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backtest -->
+      <div class="adv-panel" id="adv-backtest">
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-title">Algo Signal Backtest — Last 30 Days</div>
+          <div id="backtest-summary" class="grid-4 gap-3" style="margin-bottom:14px"></div>
+          <div style="overflow-x:auto"><table class="data-table" id="backtest-table">
+            <thead><tr>
+              <th style="text-align:left">Date</th><th>Dir</th><th>Entry</th>
+              <th>Target</th><th>SL</th><th>Actual</th><th>Result</th><th>P&L pts</th>
+            </tr></thead>
+            <tbody id="backtest-tbody"><tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">Loading…</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+
+      <!-- Calendar -->
+      <div class="adv-panel" id="adv-calendar">
+        <div class="card">
+          <div class="card-title">📅 Economic Calendar &amp; F&O Event Risk</div>
+          <div id="calendar-list"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== ALGO TAB ===== -->
     <div class="tab-panel" id="tab-algo">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
@@ -1218,6 +1412,7 @@ function switchTab(tab) {
   if (tab === 'positions')    loadPositions();
   if (tab === 'oi-history')   initOIHistoryTab();
   if (tab === 'algo')         loadAlgo();
+  if (tab === 'advanced')     loadAdvanced();
 }
 
 // ============================================================
@@ -1984,6 +2179,343 @@ async function loadPositions() {
   } catch(e) {
     console.error('Positions error:', e);
   }
+}
+
+// ============================================================
+// Advanced Analytics
+// ============================================================
+const advState = { index: 'NIFTY', subtab: 'gex', charts: {} };
+
+function setAdvIndex(idx) {
+  advState.index = idx;
+  document.getElementById('adv-nifty-btn').classList.toggle('active', idx==='NIFTY');
+  document.getElementById('adv-sensex-btn').classList.toggle('active', idx==='SENSEX');
+  loadAdvanced();
+}
+
+function switchAdvTab(tab) {
+  advState.subtab = tab;
+  document.querySelectorAll('.adv-stab').forEach((b,i) => {
+    const tabs=['gex','heatmap','iv','mtf','payoff','backtest','calendar'];
+    b.classList.toggle('active', tabs[i]===tab);
+  });
+  document.querySelectorAll('.adv-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('adv-'+tab).classList.add('active');
+  loadAdvSubtab(tab);
+}
+
+function loadAdvanced() {
+  loadAdvSubtab(advState.subtab);
+}
+
+function loadAdvSubtab(tab) {
+  const idx = advState.index;
+  if (tab==='gex')      loadGEX(idx);
+  if (tab==='heatmap')  loadHeatmap(idx);
+  if (tab==='iv')       loadIVSurface(idx);
+  if (tab==='mtf')      loadMTF(idx);
+  if (tab==='payoff')   loadPayoff();
+  if (tab==='backtest') loadBacktest(idx);
+  if (tab==='calendar') loadCalendar();
+}
+
+function destroyChart(key) {
+  if (advState.charts[key]) { advState.charts[key].destroy(); delete advState.charts[key]; }
+}
+
+// ── GEX ─────────────────────────────────────────────────────
+async function loadGEX(idx) {
+  document.getElementById('gex-summary').innerHTML = '<div class="loading-overlay"><div class="spinner"></div></div>';
+  try {
+    const d = await fetch(`/api/gex/${idx}`).then(r=>r.json());
+    // Summary
+    const regime_color = d.total_gex > 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('gex-summary').innerHTML = `
+      <div class="gex-summary-row"><span style="color:var(--text-muted)">Total GEX</span><span style="font-family:var(--font-mono);font-weight:700;color:${regime_color}">${d.total_gex > 0 ? '+' : ''}${d.total_gex?.toFixed(2)}</span></div>
+      <div class="gex-summary-row"><span style="color:var(--text-muted)">Regime</span><span style="font-size:11px;font-weight:700;color:${regime_color}">${d.regime}</span></div>
+      <div class="gex-summary-row"><span style="color:var(--text-muted)">GEX Flip Level</span><span style="font-family:var(--font-mono);font-weight:700;color:var(--yellow)">${d.gex_flip || '—'}</span></div>
+      <div class="gex-summary-row"><span style="color:var(--text-muted)">Spot</span><span style="font-family:var(--font-mono)">₹${d.spot?.toLocaleString('en-IN')}</span></div>
+      <div style="margin-top:10px;font-size:11px;color:var(--text-muted);line-height:1.6">
+        <strong style="color:var(--text)">What is GEX?</strong><br>
+        Positive GEX → Market makers buy dips &amp; sell rallies → price stays range-bound.<br>
+        Negative GEX → Market makers amplify moves → expect large swings.
+      </div>`;
+    // Walls
+    document.getElementById('gex-walls').innerHTML = (d.top_walls||[]).map(w=>`
+      <div class="gex-wall-row">
+        <span class="gex-wall-strike">${w.strike}</span>
+        <span class="gex-wall-val" style="color:${w.net_gex>0?'var(--green)':'var(--red)'}">${w.net_gex>0?'+':''}${w.net_gex?.toFixed(1)}</span>
+      </div>`).join('');
+    // Chart
+    destroyChart('gex');
+    const strikes = (d.strikes||[]);
+    const ctx = document.getElementById('gex-chart').getContext('2d');
+    advState.charts['gex'] = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: strikes.map(s=>s.strike),
+        datasets: [{
+          label: 'Net GEX',
+          data: strikes.map(s=>s.net_gex),
+          backgroundColor: strikes.map(s=>s.net_gex>0?'rgba(0,217,100,0.6)':'rgba(255,71,87,0.6)'),
+          borderColor: strikes.map(s=>s.net_gex>0?'#00d964':'#ff4757'),
+          borderWidth: 1,
+        }]
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>`GEX: ${c.raw?.toFixed(2)}`}} },
+        scales:{
+          x:{ ticks:{color:'#6e7681',font:{size:10}}, grid:{color:'rgba(33,38,45,.5)'} },
+          y:{ ticks:{color:'#6e7681'}, grid:{color:'rgba(33,38,45,.5)'}, border:{color:'transparent'} }
+        }
+      }
+    });
+  } catch(e) { document.getElementById('gex-summary').innerHTML=`<div style="color:var(--red);padding:10px">Error: ${e.message}</div>`; }
+}
+
+// ── OI Heatmap ───────────────────────────────────────────────
+async function loadHeatmap(idx) {
+  const el = document.getElementById('oi-heatmap-grid');
+  el.innerHTML='<div class="loading-overlay"><div class="spinner"></div></div>';
+  try {
+    const d = await fetch(`/api/oi-heatmap/${idx}`).then(r=>r.json());
+    const rows = d.strikes || [];
+    const spot = d.spot;
+    const maxCE = Math.max(...rows.map(r=>Math.abs(r.ce_oi_chg||0)),1);
+    const maxPE = Math.max(...rows.map(r=>Math.abs(r.pe_oi_chg||0)),1);
+    el.innerHTML = `
+      <div class="heatmap-row heatmap-header">
+        <div style="text-align:right">CE OI Chg</div><div>CE Bar</div>
+        <div style="text-align:center">CE LTP</div>
+        <div style="text-align:center">Strike</div>
+        <div style="text-align:center">PE LTP</div>
+        <div>PE Bar</div><div style="text-align:right">PE OI Chg</div><div style="text-align:center">Tag</div>
+      </div>` +
+      rows.map(r=>{
+        const isAtm = Math.abs(r.strike-spot)<(idx==='NIFTY'?30:75);
+        const ceW = Math.abs(r.ce_oi_chg)/maxCE*100;
+        const peW = Math.abs(r.pe_oi_chg)/maxPE*100;
+        const ceCol = r.ce_oi_chg>0?'rgba(255,71,87,0.7)':'rgba(0,217,100,0.4)';
+        const peCol = r.pe_oi_chg>0?'rgba(0,217,100,0.7)':'rgba(255,71,87,0.4)';
+        const tagClass = r.tag==='STRONG SUPPORT'?'SR':r.tag==='STRONG RESISTANCE'?'RS':r.tag==='SUPPORT'?'S':r.tag==='RESISTANCE'?'R':'';
+        return `<div class="heatmap-row" style="${isAtm?'background:rgba(255,215,0,.06)':''}">
+          <div class="hm-val" style="color:${r.ce_oi_chg>0?'var(--red)':'var(--green)'}">${(r.ce_oi_chg/1000).toFixed(1)}K</div>
+          <div style="display:flex;align-items:center;justify-content:flex-end"><div class="hm-bar" style="width:${ceW}%;background:${ceCol};transform:scaleX(-1)"></div></div>
+          <div class="hm-val" style="text-align:center;color:var(--red)">₹${r.ce_ltp?.toFixed(1)}</div>
+          <div class="hm-strike" style="${isAtm?'color:var(--yellow)':''}">${r.strike}${isAtm?' ◈':''}</div>
+          <div class="hm-val" style="text-align:center;color:var(--green)">₹${r.pe_ltp?.toFixed(1)}</div>
+          <div style="display:flex;align-items:center"><div class="hm-bar" style="width:${peW}%;background:${peCol}"></div></div>
+          <div class="hm-val" style="color:${r.pe_oi_chg>0?'var(--green)':'var(--red)'}">${(r.pe_oi_chg/1000).toFixed(1)}K</div>
+          <div><span class="hm-tag ${tagClass}">${r.tag}</span></div>
+        </div>`;
+      }).join('');
+  } catch(e) { el.innerHTML=`<div style="color:var(--red);padding:10px">Error: ${e.message}</div>`; }
+}
+
+// ── IV Surface ───────────────────────────────────────────────
+async function loadIVSurface(idx) {
+  document.getElementById('iv-summary').innerHTML='<div class="loading-overlay"><div class="spinner"></div></div>';
+  try {
+    const d = await fetch(`/api/iv-surface/${idx}`).then(r=>r.json());
+    const ivp = d.iv_percentile||0;
+    const ivpColor = ivp>60?'var(--red)':ivp<40?'var(--green)':'var(--yellow)';
+    document.getElementById('iv-summary').innerHTML=`
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+          <span style="color:var(--text-muted)">IV Percentile</span>
+          <span style="font-family:var(--font-mono);font-weight:700;color:${ivpColor}">${ivp}%</span>
+        </div>
+        <div class="iv-gauge"><div class="iv-gauge-fill" style="width:${ivp}%;background:${ivpColor}"></div></div>
+        <div style="font-size:11px;font-weight:700;color:${ivpColor};text-align:center">${d.iv_regime}</div>
+      </div>
+      <div class="iv-stat"><span class="lbl">ATM IV</span><span class="val">${d.atm_iv}%</span></div>
+      <div class="iv-stat"><span class="lbl">CE ATM IV</span><span class="val">${d.atm_iv_ce}%</span></div>
+      <div class="iv-stat"><span class="lbl">PE ATM IV</span><span class="val">${d.atm_iv_pe}%</span></div>
+      <div class="iv-stat"><span class="lbl">IV Skew</span><span class="val" style="color:${d.skew_direction==='PUT SKEW'?'var(--green)':'var(--red)'}">${d.skew_direction}</span></div>
+      <div class="iv-stat"><span class="lbl">52W IV Low</span><span class="val">${d.iv_52w_low}%</span></div>
+      <div class="iv-stat"><span class="lbl">52W IV High</span><span class="val">${d.iv_52w_high}%</span></div>
+      <div class="iv-stat"><span class="lbl">Expiry</span><span class="val">${d.expiry}</span></div>
+      <div class="iv-stat"><span class="lbl">Days to Expiry</span><span class="val">${d.expiry_days}</span></div>
+      <div style="margin-top:12px;font-size:11px;color:var(--text-muted);line-height:1.6">
+        <strong style="color:var(--text)">IV Regime guide:</strong><br>
+        IVP &gt;60% → Sell options (Straddle/Strangle)<br>
+        IVP &lt;40% → Buy options (directional play)<br>
+        Put Skew → Market fears downside
+      </div>`;
+    // Chart
+    destroyChart('iv');
+    const rows = (d.strikes||[]).filter(r=>r.ce_iv>0||r.pe_iv>0);
+    const ctx = document.getElementById('iv-chart').getContext('2d');
+    advState.charts['iv'] = new Chart(ctx, {
+      type:'line',
+      data:{
+        labels: rows.map(r=>r.strike),
+        datasets:[
+          {label:'CE IV %',data:rows.map(r=>r.ce_iv),borderColor:'#00d964',backgroundColor:'rgba(0,217,100,0.08)',tension:0.4,pointRadius:3,fill:false},
+          {label:'PE IV %',data:rows.map(r=>r.pe_iv),borderColor:'#ff4757',backgroundColor:'rgba(255,71,87,0.08)',tension:0.4,pointRadius:3,fill:false},
+        ]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{labels:{color:'#c9d1d9',font:{size:11}}}},
+        scales:{
+          x:{ticks:{color:'#6e7681',font:{size:10}},grid:{color:'rgba(33,38,45,.5)'}},
+          y:{ticks:{color:'#6e7681',callback:v=>v+'%'},grid:{color:'rgba(33,38,45,.5)'},border:{color:'transparent'}}
+        }
+      }
+    });
+  } catch(e) { document.getElementById('iv-summary').innerHTML=`<div style="color:var(--red)">Error: ${e.message}</div>`; }
+}
+
+// ── MTF Signals ──────────────────────────────────────────────
+async function loadMTF(idx) {
+  document.getElementById('mtf-overall').textContent='Loading…';
+  document.getElementById('mtf-grid').innerHTML='<div class="loading-overlay"><div class="spinner"></div></div>';
+  try {
+    const d = await fetch(`/api/mtf-signals/${idx}`).then(r=>r.json());
+    const overall = d.overall||'';
+    const oc = overall.includes('STRONG BUY')?'var(--green)':overall.includes('STRONG SELL')?'var(--red)':overall.includes('MILD BUY')?'var(--blue)':overall.includes('MILD SELL')?'#ffa500':'var(--yellow)';
+    document.getElementById('mtf-overall').innerHTML=`<span style="color:${oc}">${overall}</span>`;
+    document.getElementById('mtf-grid').innerHTML=
+      `<div class="mtf-row" style="border-bottom:2px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)">Timeframe</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)">Bias</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);text-align:center">Score</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)">RSI</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted)">Signals</div>
+      </div>` +
+      (d.timeframes||[]).map(tf=>{
+        const sc = tf.score;
+        const scColor = sc>0?'var(--green)':sc<0?'var(--red)':'var(--yellow)';
+        const biasKey = tf.bias==='BULLISH'?'BULLISH':tf.bias==='BEARISH'?'BEARISH':'NEUTRAL';
+        return `<div class="mtf-row">
+          <div class="mtf-tf">${tf.tf}</div>
+          <div><span class="mtf-bias ${biasKey}">${tf.bias}</span></div>
+          <div class="mtf-score" style="color:${scColor}">${sc>0?'+':''}${sc}</div>
+          <div class="mtf-rsi">RSI ${tf.rsi}</div>
+          <div class="mtf-details">${(tf.details||[]).map(d=>`<span class="mtf-chip">${d}</span>`).join('')}</div>
+        </div>`;
+      }).join('');
+  } catch(e) { document.getElementById('mtf-grid').innerHTML=`<div style="color:var(--red)">Error: ${e.message}</div>`; }
+}
+
+// ── Strategy Payoff ──────────────────────────────────────────
+async function loadPayoff() {
+  const idx      = advState.index;
+  const strategy = document.getElementById('payoff-strategy')?.value || 'iron_condor';
+  destroyChart('payoff');
+  try {
+    const d = await fetch(`/api/strategy-payoff/${idx}?strategy=${strategy}`).then(r=>r.json());
+    document.getElementById('payoff-name').textContent = d.name + ' — P&L at Expiry';
+    // Details
+    const profitColor = d.max_profit > 0 ? 'var(--green)' : 'var(--red)';
+    const lossColor   = d.max_loss   < 0 ? 'var(--red)'   : 'var(--green)';
+    document.getElementById('payoff-details').innerHTML=`
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">${d.description}</div>
+      <div style="font-weight:700;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Legs</div>
+      ${(d.legs||[]).map(l=>`
+        <div class="payoff-leg">
+          <span style="color:${l.action==='BUY'?'var(--green)':'var(--red)'};font-weight:700">${l.action} ${l.type}</span>
+          <span style="font-family:var(--font-mono)">${l.strike}</span>
+          <span style="font-family:var(--font-mono);color:var(--text-muted)">₹${l.premium?.toFixed(1)}</span>
+        </div>`).join('')}
+      <div style="margin-top:12px">
+        <div class="payoff-stat"><span style="color:var(--text-muted)">Max Profit</span><span style="font-family:var(--font-mono);font-weight:700;color:${profitColor}">₹${d.max_profit?.toLocaleString('en-IN')}</span></div>
+        <div class="payoff-stat"><span style="color:var(--text-muted)">Max Loss</span><span style="font-family:var(--font-mono);font-weight:700;color:${lossColor}">₹${d.max_loss?.toLocaleString('en-IN')}</span></div>
+        <div class="payoff-stat"><span style="color:var(--text-muted)">Breakevens</span><span style="font-family:var(--font-mono)">${(d.breakevens||[]).join(' / ') || '—'}</span></div>
+        <div class="payoff-stat"><span style="color:var(--text-muted)">Lot Size</span><span style="font-family:var(--font-mono)">${d.lot_size}</span></div>
+      </div>`;
+    // Chart
+    const pts = d.payoff || [];
+    const ctx = document.getElementById('payoff-chart').getContext('2d');
+    advState.charts['payoff'] = new Chart(ctx, {
+      type:'line',
+      data:{
+        labels: pts.map(p=>p.price),
+        datasets:[{
+          label:'P&L (₹)',
+          data: pts.map(p=>p.pnl),
+          borderColor: pts.map(p=>p.pnl>=0?'#00d964':'#ff4757'),
+          segment:{ borderColor: ctx2 => ctx2.p1.parsed.y>=0?'#00d964':'#ff4757' },
+          backgroundColor: ctx2 => {
+            const grad = ctx2.chart.ctx.createLinearGradient(0,0,0,280);
+            grad.addColorStop(0,'rgba(0,217,100,0.15)');
+            grad.addColorStop(1,'rgba(255,71,87,0.05)');
+            return grad;
+          },
+          fill:true, tension:0.2, pointRadius:0, borderWidth:2,
+        }]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`P&L: ₹${c.raw?.toLocaleString('en-IN')}`}}},
+        scales:{
+          x:{ticks:{color:'#6e7681',font:{size:9},maxTicksLimit:10},grid:{color:'rgba(33,38,45,.5)'}},
+          y:{ticks:{color:'#6e7681',callback:v=>'₹'+v.toLocaleString('en-IN')},grid:{color:'rgba(33,38,45,.5)'},border:{color:'transparent'}}
+        }
+      }
+    });
+  } catch(e) { console.error('Payoff error',e); }
+}
+
+// ── Backtest ─────────────────────────────────────────────────
+async function loadBacktest(idx) {
+  document.getElementById('backtest-tbody').innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">Loading…</td></tr>';
+  document.getElementById('backtest-summary').innerHTML='';
+  try {
+    const d = await fetch(`/api/backtest/${idx}?days=30`).then(r=>r.json());
+    const wrColor = d.win_rate>=55?'var(--green)':d.win_rate>=45?'var(--yellow)':'var(--red)';
+    const pfColor = d.profit_factor>=1.5?'var(--green)':d.profit_factor>=1?'var(--yellow)':'var(--red)';
+    const pnlColor= d.total_pnl_pts>=0?'var(--green)':'var(--red)';
+    document.getElementById('backtest-summary').innerHTML=`
+      <div class="bt-stat"><div class="lbl">Total Trades</div><div class="val">${d.total_trades}</div></div>
+      <div class="bt-stat"><div class="lbl">Win Rate</div><div class="val" style="color:${wrColor}">${d.win_rate}%</div></div>
+      <div class="bt-stat"><div class="lbl">Profit Factor</div><div class="val" style="color:${pfColor}">${d.profit_factor}</div></div>
+      <div class="bt-stat"><div class="lbl">Total P&L (pts)</div><div class="val" style="color:${pnlColor}">${d.total_pnl_pts>0?'+':''}${d.total_pnl_pts}</div></div>`;
+    const rows = (d.trades||[]).slice().reverse().map(t=>`
+      <tr>
+        <td style="text-align:left;color:var(--text-muted)">${t.date}</td>
+        <td style="color:${t.direction==='BUY'?'var(--green)':'var(--red)'};font-weight:700">${t.direction}</td>
+        <td>${t.entry}</td><td style="color:var(--green)">${t.target}</td>
+        <td style="color:var(--red)">${t.sl}</td><td>${t.actual}</td>
+        <td><span style="font-weight:700;color:${t.outcome==='WIN'?'var(--green)':t.outcome==='LOSS'?'var(--red)':'var(--text-muted)'}">${t.outcome}</span></td>
+        <td style="color:${t.pnl_pts>=0?'var(--green)':'var(--red)'}">${t.pnl_pts>0?'+':''}${t.pnl_pts}</td>
+      </tr>`).join('');
+    document.getElementById('backtest-tbody').innerHTML = rows || '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">No signals in this period</td></tr>';
+  } catch(e) { document.getElementById('backtest-tbody').innerHTML=`<tr><td colspan="8" style="color:var(--red);padding:20px">${e.message}</td></tr>`; }
+}
+
+// ── Economic Calendar ────────────────────────────────────────
+async function loadCalendar() {
+  const el = document.getElementById('calendar-list');
+  el.innerHTML='<div class="loading-overlay"><div class="spinner"></div></div>';
+  try {
+    const d = await fetch('/api/economic-calendar').then(r=>r.json());
+    const impactIcon = {'HIGH':'🔴','MEDIUM':'🟡','EXTREME':'⚠️'};
+    const typeIcon   = {'expiry':'📅','rbi':'🏦','macro':'📊','global':'🌐'};
+    el.innerHTML = (d.events||[]).map(e=>{
+      const isToday = e.days_away===0;
+      const isSoon  = e.days_away>=0 && e.days_away<=2;
+      return `<div class="cal-event" style="${isToday?'background:rgba(255,215,0,.05);border-radius:6px;padding:10px':''}${isSoon&&!isToday?'background:rgba(255,71,87,.04);border-radius:6px;padding:10px':''}">
+        <div>
+          <div class="cal-date">${e.date}</div>
+          <div class="cal-days-away">${e.label||''}</div>
+        </div>
+        <div style="flex:1">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <span>${typeIcon[e.type]||'📌'}</span>
+            <span class="cal-event-name">${e.event}</span>
+            ${isToday?'<span style="font-size:10px;background:rgba(255,215,0,.2);color:var(--yellow);padding:2px 8px;border-radius:8px;font-weight:700">TODAY</span>':''}
+          </div>
+          <div style="display:flex;gap:6px">
+            <span class="cal-badge ${e.impact}">${impactIcon[e.impact]||''} ${e.impact}</span>
+            ${e.index&&e.index!=='ALL'?`<span style="font-size:10px;color:var(--text-muted)">${e.index}</span>`:''}
+          </div>
+        </div>
+      </div>`;
+    }).join('') || '<div style="color:var(--text-muted);padding:20px;text-align:center">No events in next 30 days</div>';
+  } catch(e) { el.innerHTML=`<div style="color:var(--red)">Error: ${e.message}</div>`; }
 }
 
 // ============================================================

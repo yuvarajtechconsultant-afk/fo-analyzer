@@ -134,6 +134,27 @@ def _mock_quote(index: str) -> Dict:
     return _mock_quote_rich(index)
 
 
+def _get_option_chain_list(index: str, expiry: str):
+    """Return (chain_list, spot) — handles both live and mock data formats."""
+    from mock_data import get_mock_option_chain as _mock_oc
+    client = get_client()
+    default_spot = 22000 if index.upper() == "NIFTY" else 73000
+    try:
+        if client.is_authenticated():
+            spot  = client.get_index_quote(index).get("last_price", default_spot)
+            chain = client.get_option_chain(index, expiry)
+            if isinstance(chain, dict):
+                spot  = chain.get("spot", spot)
+                chain = chain.get("chain", [])
+            return chain, spot
+    except Exception:
+        pass
+    raw = _mock_oc(index, expiry, None)
+    if isinstance(raw, dict):
+        return raw.get("chain", []), raw.get("spot", default_spot)
+    return raw, default_spot
+
+
 def _get_historical_df(index: str, interval: str = "5minute", days: int = 10) -> pd.DataFrame:
     """Fetch historical data and return as DataFrame."""
     client = get_client()
@@ -925,6 +946,562 @@ async def algo_signals():
             results[index] = {"signal": "ERROR", "error": str(ex)}
 
     return JSONResponse(results)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ADVANCED ANALYTICS ENDPOINTS
+# ──────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/gex/{index}")
+async def gamma_exposure(index: str):
+    """Gamma Exposure (GEX) per strike — shows dealer hedging walls."""
+    from analysis.options import enrich_option_chain_with_greeks, calculate_max_pain
+
+    lot_size = LOT_SIZES.get(index.upper(), 25)
+    expiry   = get_nearest_expiry(index).strftime("%Y-%m-%d")
+    chain, spot = _get_option_chain_list(index, expiry)
+
+    expiry_days = days_to_expiry(expiry)
+    chain = enrich_option_chain_with_greeks(chain, spot, expiry_days, RISK_FREE_RATE)
+
+    gex_data = []
+    total_gex = 0
+    for row in chain:
+        strike = row.get("strike", 0)
+        ce = row.get("CE") or {}
+        pe = row.get("PE") or {}
+        ce_gamma = (ce.get("greeks") or {}).get("gamma", 0) or 0
+        pe_gamma = (pe.get("greeks") or {}).get("gamma", 0) or 0
+        ce_oi    = ce.get("oi", 0) or 0
+        pe_oi    = pe.get("oi", 0) or 0
+        # GEX = gamma × OI × lot_size × spot² / 100 (standard formula)
+        ce_gex   = ce_gamma * ce_oi * lot_size * spot * spot / 1e7
+        pe_gex   = pe_gamma * pe_oi * lot_size * spot * spot / 1e7
+        net_gex  = round(ce_gex - pe_gex, 2)
+        total_gex += net_gex
+        gex_data.append({
+            "strike": strike,
+            "ce_gex": round(ce_gex, 2),
+            "pe_gex": round(pe_gex, 2),
+            "net_gex": net_gex,
+            "ce_gamma": round(ce_gamma, 6),
+            "pe_gamma": round(pe_gamma, 6),
+            "ce_oi": ce_oi,
+            "pe_oi": pe_oi,
+        })
+
+    # Key GEX levels
+    gex_data_sorted = sorted(gex_data, key=lambda x: abs(x["net_gex"]), reverse=True)
+    flip_level = next((g["strike"] for g in gex_data if g["net_gex"] < 0), None)
+
+    return JSONResponse(sanitize({
+        "index": index.upper(),
+        "spot": spot,
+        "lot_size": lot_size,
+        "total_gex": round(total_gex, 2),
+        "gex_flip": flip_level,
+        "regime": "POSITIVE GEX — Market stabilising" if total_gex > 0 else "NEGATIVE GEX — Market accelerating",
+        "strikes": gex_data,
+        "top_walls": gex_data_sorted[:5],
+    }))
+
+
+@app.get("/api/oi-heatmap/{index}")
+async def oi_heatmap(index: str):
+    """OI Change Heatmap — shows support/resistance walls from option writing."""
+    expiry = get_nearest_expiry(index).strftime("%Y-%m-%d")
+    chain, spot = _get_option_chain_list(index, expiry)
+
+    rows = []
+    max_ce_oi_chg = max_pe_oi_chg = 1
+    for row in chain:
+        ce = row.get("CE") or {}
+        pe = row.get("PE") or {}
+        ce_oi_chg = abs(ce.get("oi_change", 0) or 0)
+        pe_oi_chg = abs(pe.get("oi_change", 0) or 0)
+        if ce_oi_chg > max_ce_oi_chg: max_ce_oi_chg = ce_oi_chg
+        if pe_oi_chg > max_pe_oi_chg: max_pe_oi_chg = pe_oi_chg
+        rows.append({
+            "strike":    row.get("strike", 0),
+            "ce_oi":     ce.get("oi", 0) or 0,
+            "pe_oi":     pe.get("oi", 0) or 0,
+            "ce_oi_chg": ce.get("oi_change", 0) or 0,
+            "pe_oi_chg": pe.get("oi_change", 0) or 0,
+            "ce_ltp":    ce.get("ltp", 0) or 0,
+            "pe_ltp":    pe.get("ltp", 0) or 0,
+        })
+
+    # Tag each strike: strong support (PE writing), resistance (CE writing)
+    for r in rows:
+        ce_pct = abs(r["ce_oi_chg"]) / max_ce_oi_chg * 100
+        pe_pct = abs(r["pe_oi_chg"]) / max_pe_oi_chg * 100
+        r["ce_heat"] = round(ce_pct, 1)
+        r["pe_heat"] = round(pe_pct, 1)
+        if pe_pct > 70 and r["pe_oi_chg"] > 0:
+            r["tag"] = "STRONG SUPPORT"
+        elif ce_pct > 70 and r["ce_oi_chg"] > 0:
+            r["tag"] = "STRONG RESISTANCE"
+        elif r["strike"] < spot and r["pe_oi_chg"] > 0:
+            r["tag"] = "SUPPORT"
+        elif r["strike"] > spot and r["ce_oi_chg"] > 0:
+            r["tag"] = "RESISTANCE"
+        else:
+            r["tag"] = ""
+
+    return JSONResponse(sanitize({"index": index.upper(), "spot": spot, "expiry": expiry, "strikes": rows}))
+
+
+@app.get("/api/iv-surface/{index}")
+async def iv_surface(index: str):
+    """IV Skew, IV Smile, IVP (IV Percentile) across strikes."""
+    from mock_data import get_mock_option_chain
+    from analysis.options import enrich_option_chain_with_greeks, get_iv_rank
+
+    expiry = get_nearest_expiry(index).strftime("%Y-%m-%d")
+    chain, spot = _get_option_chain_list(index, expiry)
+    expiry_days = days_to_expiry(expiry)
+    chain = enrich_option_chain_with_greeks(chain, spot, expiry_days, RISK_FREE_RATE)
+
+    iv_rows = []
+    atm_iv_ce = atm_iv_pe = 0
+    atm_strike = get_atm_strike(spot, index)
+
+    for row in chain:
+        strike = row.get("strike", 0)
+        ce = row.get("CE") or {}
+        pe = row.get("PE") or {}
+        ce_iv = ce.get("iv", 0) or 0
+        pe_iv = pe.get("iv", 0) or 0
+        moneyness = round((strike - spot) / spot * 100, 2)
+        iv_rows.append({
+            "strike": strike,
+            "moneyness": moneyness,
+            "ce_iv": ce_iv,
+            "pe_iv": pe_iv,
+            "skew": round(pe_iv - ce_iv, 2),
+        })
+        if strike == atm_strike:
+            atm_iv_ce = ce_iv
+            atm_iv_pe = pe_iv
+
+    atm_iv = (atm_iv_ce + atm_iv_pe) / 2 if (atm_iv_ce + atm_iv_pe) > 0 else 20
+    # Simulate IVP from mock historical (real: compare vs 52-week IV range)
+    iv_52w_low  = atm_iv * 0.6
+    iv_52w_high = atm_iv * 1.8
+    ivp = round((atm_iv - iv_52w_low) / max(iv_52w_high - iv_52w_low, 1) * 100, 1)
+
+    skew_direction = "PUT SKEW" if atm_iv_pe > atm_iv_ce else "CALL SKEW"
+    iv_regime = "HIGH IV — Sell options" if ivp > 60 else ("LOW IV — Buy options" if ivp < 40 else "NORMAL IV")
+
+    return JSONResponse(sanitize({
+        "index": index.upper(),
+        "spot": spot,
+        "expiry": expiry,
+        "expiry_days": expiry_days,
+        "atm_iv": round(atm_iv, 2),
+        "atm_iv_ce": atm_iv_ce,
+        "atm_iv_pe": atm_iv_pe,
+        "iv_percentile": ivp,
+        "iv_52w_low": round(iv_52w_low, 2),
+        "iv_52w_high": round(iv_52w_high, 2),
+        "skew_direction": skew_direction,
+        "iv_regime": iv_regime,
+        "strikes": iv_rows,
+    }))
+
+
+@app.get("/api/mtf-signals/{index}")
+async def mtf_signals(index: str):
+    """Multi-Timeframe signal alignment — 5min, 15min, 1hr, Daily."""
+    from analysis.technical import (
+        calculate_ema, calculate_rsi, calculate_macd, calculate_supertrend, calculate_atr,
+    )
+
+    timeframes = [
+        ("5minute",  3,  "5 Min"),
+        ("15minute", 5,  "15 Min"),
+        ("60minute", 20, "1 Hour"),
+        ("day",      60, "Daily"),
+    ]
+    results = []
+
+    for interval, days, label in timeframes:
+        try:
+            df = _get_historical_df(index, interval, days)
+            if df.empty or len(df) < 20:
+                results.append({"tf": label, "bias": "NO DATA", "score": 0, "rsi": 0, "details": []})
+                continue
+
+            close = df["close"]
+            high  = df["high"]
+            low   = df["low"]
+            ema9  = calculate_ema(close, 9)
+            ema21 = calculate_ema(close, 21)
+            ema50 = calculate_ema(close, 50)
+            rsi   = calculate_rsi(close, 14)
+            macd_d = calculate_macd(close)
+            hist   = macd_d["histogram"]
+            try:
+                st = calculate_supertrend(high, low, close, 10, 3)
+                st_dir = st.get("direction", pd.Series([1]*len(df), index=df.index))
+            except Exception:
+                st_dir = pd.Series([1]*len(df), index=df.index)
+
+            i = len(df) - 1
+            score = 0
+            details = []
+
+            e9, e21, e50 = float(ema9.iloc[i]), float(ema21.iloc[i]), float(ema50.iloc[i])
+            rsi_v = float(rsi.iloc[i])
+            hist_v = float(hist.iloc[i])
+            st_v  = int(st_dir.iloc[i])
+            price = float(close.iloc[i])
+
+            if e9 > e21 > e50:   score += 2; details.append("EMA bullish ▲")
+            elif e9 < e21 < e50: score -= 2; details.append("EMA bearish ▼")
+
+            if hist_v > 0:   score += 1; details.append("MACD+ ▲")
+            else:            score -= 1; details.append("MACD− ▼")
+
+            if rsi_v > 55:   score += 1; details.append(f"RSI {rsi_v:.0f} ▲")
+            elif rsi_v < 45: score -= 1; details.append(f"RSI {rsi_v:.0f} ▼")
+            else:            details.append(f"RSI {rsi_v:.0f} →")
+
+            if st_v == 1:    score += 1; details.append("ST Bullish ▲")
+            else:            score -= 1; details.append("ST Bearish ▼")
+
+            if price > e50:  score += 1; details.append("Above EMA50 ▲")
+            else:            score -= 1; details.append("Below EMA50 ▼")
+
+            bias = "BULLISH" if score >= 3 else ("BEARISH" if score <= -3 else "NEUTRAL")
+            results.append({
+                "tf": label, "bias": bias, "score": score,
+                "rsi": round(rsi_v, 1), "details": details,
+                "price": round(price, 2),
+            })
+        except Exception as ex:
+            results.append({"tf": label, "bias": "ERROR", "score": 0, "rsi": 0, "details": [str(ex)]})
+
+    # Overall alignment
+    scores = [r["score"] for r in results if r["bias"] not in ("NO DATA","ERROR")]
+    total  = sum(scores)
+    aligned_bull = all(r["score"] > 0 for r in results if r["bias"] not in ("NO DATA","ERROR"))
+    aligned_bear = all(r["score"] < 0 for r in results if r["bias"] not in ("NO DATA","ERROR"))
+    if aligned_bull:  overall = "STRONG BUY — All TFs aligned bullish"
+    elif aligned_bear: overall = "STRONG SELL — All TFs aligned bearish"
+    elif total > 4:   overall = "MILD BUY — Majority bullish"
+    elif total < -4:  overall = "MILD SELL — Majority bearish"
+    else:             overall = "MIXED — Wait for alignment"
+
+    return JSONResponse(sanitize({
+        "index": index.upper(),
+        "overall": overall,
+        "total_score": total,
+        "timeframes": results,
+    }))
+
+
+@app.get("/api/strategy-payoff/{index}")
+async def strategy_payoff(index: str, strategy: str = "iron_condor"):
+    """Option strategy P&L payoff data for chart rendering."""
+    lot_size = LOT_SIZES.get(index.upper(), 25)
+    expiry   = get_nearest_expiry(index).strftime("%Y-%m-%d")
+    chain, spot = _get_option_chain_list(index, expiry)
+
+    atm = get_atm_strike(spot, index)
+    gap = 50 if index.upper() == "NIFTY" else 100
+
+    # Build strategy legs based on option chain premiums
+    chain_dict = {}
+    for row in chain:
+        s = row.get("strike", 0)
+        chain_dict[s] = row
+
+    def get_ltp(strike, opt_type):
+        row = chain_dict.get(strike, {})
+        return (row.get(opt_type) or {}).get("ltp", 0) or 0
+
+    strategies = {
+        "iron_condor": {
+            "name": "Iron Condor",
+            "description": "Sell OTM Call + Put, Buy further OTM Call + Put. Profit if market stays range-bound.",
+            "legs": [
+                {"action":"SELL","type":"CE","strike":atm+gap*2,   "premium":get_ltp(atm+gap*2,"CE")},
+                {"action":"SELL","type":"PE","strike":atm-gap*2,   "premium":get_ltp(atm-gap*2,"PE")},
+                {"action":"BUY", "type":"CE","strike":atm+gap*4,   "premium":get_ltp(atm+gap*4,"CE")},
+                {"action":"BUY", "type":"PE","strike":atm-gap*4,   "premium":get_ltp(atm-gap*4,"PE")},
+            ],
+        },
+        "straddle": {
+            "name": "Short Straddle",
+            "description": "Sell ATM Call + Put. Profit from time decay if market stays near ATM.",
+            "legs": [
+                {"action":"SELL","type":"CE","strike":atm,"premium":get_ltp(atm,"CE")},
+                {"action":"SELL","type":"PE","strike":atm,"premium":get_ltp(atm,"PE")},
+            ],
+        },
+        "strangle": {
+            "name": "Short Strangle",
+            "description": "Sell OTM Call + Put. Wider range than straddle, lower premium collected.",
+            "legs": [
+                {"action":"SELL","type":"CE","strike":atm+gap*2,"premium":get_ltp(atm+gap*2,"CE")},
+                {"action":"SELL","type":"PE","strike":atm-gap*2,"premium":get_ltp(atm-gap*2,"PE")},
+            ],
+        },
+        "bull_call_spread": {
+            "name": "Bull Call Spread",
+            "description": "Buy ATM CE, Sell OTM CE. Limited profit, limited loss — bullish strategy.",
+            "legs": [
+                {"action":"BUY", "type":"CE","strike":atm,      "premium":get_ltp(atm,"CE")},
+                {"action":"SELL","type":"CE","strike":atm+gap*2,"premium":get_ltp(atm+gap*2,"CE")},
+            ],
+        },
+        "bear_put_spread": {
+            "name": "Bear Put Spread",
+            "description": "Buy ATM PE, Sell OTM PE. Limited profit, limited loss — bearish strategy.",
+            "legs": [
+                {"action":"BUY", "type":"PE","strike":atm,      "premium":get_ltp(atm,"PE")},
+                {"action":"SELL","type":"PE","strike":atm-gap*2,"premium":get_ltp(atm-gap*2,"PE")},
+            ],
+        },
+        "butterfly": {
+            "name": "Long Butterfly",
+            "description": "Buy 1 ITM CE, Sell 2 ATM CE, Buy 1 OTM CE. Very low cost, profit at ATM on expiry.",
+            "legs": [
+                {"action":"BUY", "type":"CE","strike":atm-gap*2,"premium":get_ltp(atm-gap*2,"CE")},
+                {"action":"SELL","type":"CE","strike":atm,      "premium":get_ltp(atm,"CE"),"qty":2},
+                {"action":"BUY", "type":"CE","strike":atm+gap*2,"premium":get_ltp(atm+gap*2,"CE")},
+            ],
+        },
+    }
+
+    strat = strategies.get(strategy, strategies["iron_condor"])
+    legs  = strat["legs"]
+
+    # Compute payoff at expiry across price range
+    price_range = [spot * (1 + i * 0.002) for i in range(-50, 51)]
+    payoff_points = []
+    net_premium = 0
+    for leg in legs:
+        qty = leg.get("qty", 1)
+        mult = -1 if leg["action"] == "SELL" else 1
+        if leg["type"] == "CE":
+            net_premium += -mult * leg["premium"] * qty
+        else:
+            net_premium += -mult * leg["premium"] * qty
+
+    for price in price_range:
+        pnl = 0
+        for leg in legs:
+            qty  = leg.get("qty", 1)
+            mult = -1 if leg["action"] == "SELL" else 1
+            prem = leg["premium"]
+            k    = leg["strike"]
+            if leg["type"] == "CE":
+                intrinsic = max(price - k, 0)
+            else:
+                intrinsic = max(k - price, 0)
+            pnl += mult * (intrinsic - prem) * qty
+        payoff_points.append({"price": round(price, 0), "pnl": round(pnl * lot_size, 0)})
+
+    # Stats
+    pnls    = [p["pnl"] for p in payoff_points]
+    max_profit = max(pnls)
+    max_loss   = min(pnls)
+    breakevens = []
+    for j in range(1, len(payoff_points)):
+        if (payoff_points[j-1]["pnl"] < 0) != (payoff_points[j]["pnl"] < 0):
+            breakevens.append(round((payoff_points[j-1]["price"]+payoff_points[j]["price"])/2))
+
+    return JSONResponse(sanitize({
+        "index": index.upper(),
+        "strategy": strategy,
+        "name": strat["name"],
+        "description": strat["description"],
+        "spot": spot,
+        "atm": atm,
+        "lot_size": lot_size,
+        "legs": legs,
+        "max_profit": max_profit,
+        "max_loss": max_loss,
+        "breakevens": breakevens,
+        "net_premium": round(net_premium * lot_size, 0),
+        "payoff": payoff_points,
+    }))
+
+
+@app.get("/api/economic-calendar")
+async def economic_calendar():
+    """Upcoming market events, expiry dates, and high-impact news."""
+    from datetime import timedelta
+    today = date.today()
+
+    events = []
+
+    # F&O Expiry dates (next 4 weeks)
+    for i in range(28):
+        d = today + timedelta(days=i)
+        if d.weekday() == 3:  # Thursday = NIFTY expiry
+            events.append({"date": d.isoformat(), "event": "NIFTY Weekly Expiry", "type": "expiry", "impact": "HIGH", "index": "NIFTY"})
+        if d.weekday() == 4:  # Friday = SENSEX expiry
+            events.append({"date": d.isoformat(), "event": "SENSEX Weekly Expiry", "type": "expiry", "impact": "HIGH", "index": "SENSEX"})
+
+    # Known scheduled events (static — update quarterly)
+    scheduled = [
+        {"date": "2026-06-06", "event": "India CPI Inflation Data", "type": "macro",  "impact": "HIGH",   "index": "ALL"},
+        {"date": "2026-06-07", "event": "India IIP Industrial Output", "type": "macro","impact": "MEDIUM", "index": "ALL"},
+        {"date": "2026-06-10", "event": "US CPI Inflation", "type": "global",          "impact": "HIGH",   "index": "ALL"},
+        {"date": "2026-06-11", "event": "RBI MPC Meeting Begins", "type": "rbi",        "impact": "HIGH",   "index": "ALL"},
+        {"date": "2026-06-13", "event": "RBI Policy Decision", "type": "rbi",           "impact": "HIGH",   "index": "ALL"},
+        {"date": "2026-06-18", "event": "US FOMC Meeting Decision", "type": "global",   "impact": "HIGH",   "index": "ALL"},
+        {"date": "2026-06-25", "event": "India GDP Q4 Advance Estimate", "type": "macro","impact":"HIGH",   "index": "ALL"},
+        {"date": "2026-07-01", "event": "GST Council Meeting", "type": "macro",         "impact": "MEDIUM", "index": "ALL"},
+        {"date": "2026-07-22", "event": "Union Budget 2026-27", "type": "macro",        "impact": "EXTREME","index": "ALL"},
+    ]
+
+    for e in scheduled:
+        try:
+            edate = date.fromisoformat(e["date"])
+            delta = (edate - today).days
+            if -2 <= delta <= 30:
+                e["days_away"] = delta
+                e["label"] = "TODAY" if delta == 0 else (f"in {delta}d" if delta > 0 else f"{-delta}d ago")
+                events.append(e)
+        except Exception:
+            pass
+
+    events.sort(key=lambda x: x["date"])
+    return JSONResponse({"events": events, "today": today.isoformat()})
+
+
+@app.get("/api/backtest/{index}")
+async def backtest_signals(index: str, days: int = 30):
+    """Backtest the algo signal on historical data — win rate, avg P&L."""
+    from analysis.technical import (
+        calculate_ema, calculate_rsi, calculate_macd, calculate_supertrend,
+        calculate_atr, calculate_bollinger_bands,
+    )
+
+    df = _get_historical_df(index, "day", max(days + 10, 60))
+    if df.empty or len(df) < 30:
+        return JSONResponse({"error": "Insufficient data"})
+
+    close  = df["close"]
+    high   = df["high"]
+    low    = df["low"]
+    ema9   = calculate_ema(close, 9)
+    ema21  = calculate_ema(close, 21)
+    ema50  = calculate_ema(close, 50)
+    ema200 = calculate_ema(close, 200)
+    rsi    = calculate_rsi(close, 14)
+    macd_d = calculate_macd(close)
+    hist   = macd_d["histogram"]
+    macd_l = macd_d["macd"]
+    sig_l  = macd_d["signal"]
+    atr    = calculate_atr(high, low, close, 14)
+    bb     = calculate_bollinger_bands(close, 20, 2)
+    try:
+        st_data = calculate_supertrend(high, low, close, 10, 3)
+        st_dir  = st_data.get("direction", pd.Series([1]*len(df), index=df.index))
+    except Exception:
+        st_dir  = pd.Series([1]*len(df), index=df.index)
+
+    trades = []
+    df_r   = df.reset_index()
+
+    for i in range(10, len(df_r) - 1):
+        c  = float(close.iloc[i])
+        e9 = float(ema9.iloc[i])
+        e21= float(ema21.iloc[i])
+        e50= float(ema50.iloc[i])
+        e200=float(ema200.iloc[i])
+        r  = float(rsi.iloc[i])
+        h  = float(hist.iloc[i])
+        m  = float(macd_l.iloc[i])
+        s  = float(sig_l.iloc[i])
+        st = int(st_dir.iloc[i])
+        bbu= float(bb["upper"].iloc[i])
+        bbm= float(bb["middle"].iloc[i])
+        bbl= float(bb["lower"].iloc[i])
+        a  = float(atr.iloc[i])
+
+        score_b = score_s = 0
+        if e9>e21>e50:    score_b += 2
+        if e9<e21<e50:    score_s += 2
+        if c > e200:      score_b += 1
+        else:             score_s += 1
+        if m > s and h > 0: score_b += 2
+        if m < s and h < 0: score_s += 2
+        if 50 < r < 70:   score_b += 2
+        if 30 < r < 50:   score_s += 2
+        if st == 1:       score_b += 2
+        else:             score_s += 2
+        if c > bbm:       score_b += 1
+        else:             score_s += 1
+
+        direction = None
+        if score_b >= 8 and score_b > score_s + 2: direction = "BUY"
+        elif score_s >= 8 and score_s > score_b + 2: direction = "SELL"
+
+        if direction:
+            entry = c
+            next_close = float(close.iloc[i + 1])
+            sl_dist    = a * 1.5
+            tgt_dist   = a * 2.5
+
+            if direction == "BUY":
+                sl     = entry - sl_dist
+                target = entry + tgt_dist
+                actual = next_close
+                hit_target = actual >= target
+                hit_sl     = actual <= sl
+                if hit_target: outcome = "WIN"; pnl = tgt_dist
+                elif hit_sl:   outcome = "LOSS"; pnl = -sl_dist
+                else:          outcome = "OPEN"; pnl = actual - entry
+            else:
+                sl     = entry + sl_dist
+                target = entry - tgt_dist
+                actual = next_close
+                hit_target = actual <= target
+                hit_sl     = actual >= sl
+                if hit_target: outcome = "WIN";  pnl = tgt_dist
+                elif hit_sl:   outcome = "LOSS"; pnl = -sl_dist
+                else:          outcome = "OPEN"; pnl = entry - actual
+
+            trades.append({
+                "date":      df_r.iloc[i]["date"].strftime("%Y-%m-%d"),
+                "direction": direction,
+                "entry":     round(entry, 2),
+                "sl":        round(sl, 2),
+                "target":    round(target, 2),
+                "actual":    round(actual, 2),
+                "outcome":   outcome,
+                "pnl_pts":   round(pnl, 2),
+                "score_b":   score_b,
+                "score_s":   score_s,
+            })
+
+    wins  = [t for t in trades if t["outcome"] == "WIN"]
+    losses= [t for t in trades if t["outcome"] == "LOSS"]
+    total_pnl = sum(t["pnl_pts"] for t in trades)
+    win_rate  = round(len(wins) / max(len(trades), 1) * 100, 1)
+    avg_win   = round(sum(t["pnl_pts"] for t in wins) / max(len(wins), 1), 2)
+    avg_loss  = round(sum(t["pnl_pts"] for t in losses) / max(len(losses), 1), 2)
+    profit_factor = round(abs(sum(t["pnl_pts"] for t in wins)) / max(abs(sum(t["pnl_pts"] for t in losses)), 1), 2)
+
+    return JSONResponse(sanitize({
+        "index":         index.upper(),
+        "days_tested":   days,
+        "total_trades":  len(trades),
+        "wins":          len(wins),
+        "losses":        len(losses),
+        "win_rate":      win_rate,
+        "total_pnl_pts": round(total_pnl, 2),
+        "avg_win_pts":   avg_win,
+        "avg_loss_pts":  avg_loss,
+        "profit_factor": profit_factor,
+        "trades":        trades[-days:],
+    }))
 
 
 @app.get("/api/dashboard")
