@@ -23,8 +23,8 @@ BFO = "BFO"
 
 # Lot sizes
 LOT_SIZES = {
-    "NIFTY": 25,
-    "SENSEX": 10,
+    "NIFTY": 65,
+    "SENSEX": 20,
     "BANKNIFTY": 15,
     "FINNIFTY": 40,
 }
