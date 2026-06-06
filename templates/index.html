@@ -1,0 +1,2120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>F&O Analyzer — NIFTY & SENSEX</title>
+  <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    /* ===== CSS Variables ===== */
+    :root {
+      --bg-primary:   #0d1117;
+      --bg-card:      #161b22;
+      --bg-card2:     #1c2128;
+      --border:       #21262d;
+      --border-light: #30363d;
+      --green:        #00d964;
+      --red:          #ff4757;
+      --yellow:       #ffd700;
+      --blue:         #58a6ff;
+      --purple:       #bc8cff;
+      --text:         #c9d1d9;
+      --text-muted:   #6e7681;
+      --text-bright:  #f0f6fc;
+      --font-mono:    'Courier New', monospace;
+    }
+
+    /* ===== Reset & Base ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: var(--bg-primary);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    button { cursor: pointer; border: none; outline: none; font-family: inherit; font-size: 13px; }
+    input, select { font-family: inherit; font-size: 13px; }
+
+    /* ===== Layout ===== */
+    .layout {
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      grid-template-columns: 200px 1fr;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .navbar  { grid-column: 1 / -1; }
+    .sidebar { grid-row: 2; }
+    .main    { grid-row: 2; overflow-y: auto; padding: 16px; }
+
+    /* ===== Navbar ===== */
+    .navbar {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 20px;
+      z-index: 100;
+    }
+    .logo { font-size: 16px; font-weight: 700; color: var(--blue); white-space: nowrap; }
+    .logo span { color: var(--green); }
+    .nav-prices { display: flex; gap: 20px; flex: 1; }
+    .nav-index {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      background: var(--bg-card2);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .nav-index .label { color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.5px; }
+    .nav-index .price { font-family: var(--font-mono); font-size: 15px; font-weight: 700; color: var(--text-bright); }
+    .nav-index .change { font-family: var(--font-mono); font-size: 11px; }
+    .change.up { color: var(--green); }
+    .change.down { color: var(--red); }
+    .nav-vix { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+    .nav-vix .vix-val { font-family: var(--font-mono); font-weight: 700; color: var(--yellow); }
+    .nav-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+    .btn-login {
+      background: var(--blue);
+      color: #000;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 12px;
+      transition: opacity 0.2s;
+    }
+    .btn-login:hover { opacity: 0.8; }
+    .btn-login.authenticated { background: var(--green); }
+    .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+    .conn-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ===== Sidebar ===== */
+    .sidebar {
+      background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      padding: 12px 0;
+      overflow-y: auto;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      color: var(--text-muted);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+      border-left: 3px solid transparent;
+    }
+    .nav-item:hover { background: var(--bg-card2); color: var(--text); }
+    .nav-item.active { background: rgba(88,166,255,0.08); color: var(--blue); border-left-color: var(--blue); }
+    .nav-item .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+    /* ===== Cards ===== */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .card-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    /* ===== Grid utilities ===== */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; }
+    .flex { display: flex; }
+    .flex-col { flex-direction: column; }
+    .gap-2 { gap: 8px; }
+    .gap-3 { gap: 12px; }
+    .gap-4 { gap: 16px; }
+    .mt-2 { margin-top: 8px; }
+    .mt-3 { margin-top: 12px; }
+    .mt-4 { margin-top: 16px; }
+
+    /* ===== Signal Card ===== */
+    .signal-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+    .signal-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+    .signal-card.buy::before { background: var(--green); }
+    .signal-card.sell::before { background: var(--red); }
+    .signal-card.wait::before { background: var(--yellow); }
+    .signal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .signal-index { font-size: 14px; font-weight: 700; color: var(--text-bright); }
+    .signal-action {
+      font-size: 13px; font-weight: 700;
+      padding: 4px 12px; border-radius: 4px;
+      letter-spacing: 1px;
+    }
+    .signal-action.buy  { background: rgba(0,217,100,0.15); color: var(--green); }
+    .signal-action.sell { background: rgba(255,71,87,0.15);  color: var(--red); }
+    .signal-action.wait { background: rgba(255,215,0,0.15);  color: var(--yellow); }
+    .signal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+    .signal-field label { display: block; font-size: 10px; color: var(--text-muted); margin-bottom: 2px; letter-spacing: 0.5px; text-transform: uppercase; }
+    .signal-field .val { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text-bright); }
+    .signal-field .val.target { color: var(--green); }
+    .signal-field .val.sl { color: var(--red); }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .badge.high   { background: rgba(0,217,100,0.15); color: var(--green); }
+    .badge.medium { background: rgba(255,215,0,0.15);  color: var(--yellow); }
+    .badge.low    { background: rgba(110,118,129,0.2);  color: var(--text-muted); }
+
+    /* ===== Metrics Row ===== */
+    .metric-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+    .metric-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); }
+    .metric-value { font-family: var(--font-mono); font-size: 20px; font-weight: 700; color: var(--text-bright); margin-top: 4px; }
+    .metric-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    /* ===== Sentiment Gauge ===== */
+    .gauge-container { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    .gauge-svg { overflow: visible; }
+    .gauge-label { font-size: 15px; font-weight: 700; }
+    .gauge-score { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+
+    /* ===== Tables ===== */
+    .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .data-table th {
+      text-align: right;
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .data-table th:first-child { text-align: left; }
+    .data-table td {
+      padding: 6px 10px;
+      border-bottom: 1px solid rgba(33,38,45,0.6);
+      text-align: right;
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+    .data-table td:first-child { text-align: left; font-family: inherit; }
+    .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .num-green { color: var(--green); }
+    .num-red   { color: var(--red); }
+    .num-yellow { color: var(--yellow); }
+    .num-blue  { color: var(--blue); }
+
+    /* ===== Option Chain ===== */
+    .chain-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .chain-table th {
+      padding: 7px 8px;
+      background: var(--bg-card2);
+      border-bottom: 2px solid var(--border);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      text-align: right;
+    }
+    .chain-table th.center { text-align: center; }
+    .chain-table td {
+      padding: 5px 8px;
+      border-bottom: 1px solid rgba(33,38,45,0.4);
+      font-family: var(--font-mono);
+      text-align: right;
+    }
+    .chain-table td.strike-cell {
+      text-align: center;
+      font-weight: 700;
+      font-size: 12px;
+      background: var(--bg-card2);
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+    }
+    .chain-table tr.atm td { background: rgba(255,215,0,0.06) !important; }
+    .chain-table tr.atm .strike-cell {
+      background: rgba(255,215,0,0.12) !important;
+      color: var(--yellow);
+    }
+    .chain-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .oi-bar {
+      display: inline-block;
+      height: 3px;
+      border-radius: 2px;
+      vertical-align: middle;
+      margin-left: 4px;
+    }
+    .oi-bar.ce { background: var(--green); }
+    .oi-bar.pe { background: var(--red); }
+
+    /* CE side — green tint for heavy OI */
+    .chain-table .ce-heavy { background: rgba(0,217,100,0.05); }
+    .chain-table .pe-heavy { background: rgba(255,71,87,0.05); }
+
+    /* ===== Technical ===== */
+    #chart-container {
+      width: 100%;
+      height: 420px;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .indicator-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 12px; }
+    .ind-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+    .ind-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 6px; }
+    .ind-value { font-family: var(--font-mono); font-size: 18px; font-weight: 700; }
+    .ind-sub { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+    .rsi-bar { width: 100%; height: 6px; background: var(--border); border-radius: 3px; margin-top: 6px; position: relative; }
+    .rsi-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+    .rsi-marker { position: absolute; top: -2px; width: 2px; height: 10px; background: white; border-radius: 1px; }
+
+    /* ===== Interval Selector ===== */
+    .interval-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+    .interval-btn {
+      padding: 4px 12px;
+      background: var(--bg-card2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+    .interval-btn:hover { border-color: var(--blue); color: var(--text); }
+    .interval-btn.active { background: var(--blue); color: #000; border-color: var(--blue); }
+    .index-btn {
+      padding: 5px 14px;
+      background: var(--bg-card2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+    .index-btn.active { background: var(--blue); color: #000; border-color: var(--blue); }
+
+    /* ===== Pivot Table ===== */
+    .pivot-grid { display: grid; grid-template-columns: 80px 1fr 1fr 1fr; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .pivot-cell { padding: 5px 8px; background: var(--bg-card); font-family: var(--font-mono); font-size: 12px; text-align: right; }
+    .pivot-cell.header { background: var(--bg-card2); font-family: inherit; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-muted); text-align: center; }
+    .pivot-cell.level  { background: var(--bg-card2); font-family: inherit; font-size: 11px; font-weight: 700; color: var(--text-muted); }
+    .pivot-cell.r { color: var(--red); }
+    .pivot-cell.s { color: var(--green); }
+    .pivot-cell.p { color: var(--yellow); }
+
+    /* ===== Strategies Tab ===== */
+    .strategy-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .strategy-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+    .strategy-name { font-size: 14px; font-weight: 700; color: var(--text-bright); }
+    .strategy-type { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    .strategy-dir {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 10px;
+      border-radius: 10px;
+    }
+    .strategy-dir.bullish { background: rgba(0,217,100,0.15); color: var(--green); }
+    .strategy-dir.bearish { background: rgba(255,71,87,0.15);  color: var(--red); }
+    .strategy-dir.neutral { background: rgba(255,215,0,0.15);  color: var(--yellow); }
+    .legs-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+    .legs-table th { padding: 4px 8px; background: var(--bg-card2); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); text-align: right; }
+    .legs-table th:first-child { text-align: left; }
+    .legs-table td { padding: 4px 8px; border-top: 1px solid rgba(33,38,45,0.5); font-family: var(--font-mono); text-align: right; }
+    .legs-table td:first-child { text-align: left; font-family: inherit; }
+    .profit-loss-row { display: flex; gap: 12px; margin-top: 10px; font-size: 12px; }
+    .pl-item label { font-size: 10px; color: var(--text-muted); display: block; }
+    .pl-item span { font-family: var(--font-mono); font-weight: 600; }
+    .btn-place {
+      background: var(--blue);
+      color: #000;
+      padding: 7px 16px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 12px;
+      transition: opacity 0.2s;
+      margin-top: 10px;
+      display: inline-block;
+    }
+    .btn-place:hover { opacity: 0.8; }
+
+    /* ===== Reasons List ===== */
+    .reasons-list { list-style: none; margin-top: 8px; }
+    .reasons-list li { padding: 4px 0; color: var(--text-muted); font-size: 12px; display: flex; align-items: flex-start; gap: 6px; }
+    .reasons-list li::before { content: '›'; color: var(--blue); font-size: 14px; line-height: 1.2; flex-shrink: 0; }
+
+    /* ===== Modal ===== */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      width: 420px;
+      max-width: 95vw;
+    }
+    .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 14px; color: var(--text-bright); }
+    .modal-field { margin-bottom: 12px; }
+    .modal-field label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-muted); margin-bottom: 4px; }
+    .modal-field input, .modal-field select {
+      width: 100%;
+      background: var(--bg-card2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-size: 13px;
+    }
+    .modal-field input:focus, .modal-field select:focus { border-color: var(--blue); outline: none; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+    .btn-cancel { padding: 8px 16px; background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+    .btn-confirm { padding: 8px 16px; background: var(--green); border-radius: 6px; color: #000; font-weight: 700; }
+    .btn-confirm:hover { opacity: 0.85; }
+
+    /* ===== Positions ===== */
+    .pnl-positive { color: var(--green); font-family: var(--font-mono); }
+    .pnl-negative { color: var(--red); font-family: var(--font-mono); }
+
+    /* ===== Flash animation for price updates ===== */
+    @keyframes flashGreen { 0%{background:rgba(0,217,100,0.25)} 100%{background:transparent} }
+    @keyframes flashRed   { 0%{background:rgba(255,71,87,0.25)}  100%{background:transparent} }
+    .flash-green { animation: flashGreen 0.6s ease-out; }
+    .flash-red   { animation: flashRed   0.6s ease-out; }
+
+    /* ===== Loading Spinner ===== */
+    .spinner {
+      width: 20px; height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-overlay {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; min-height: 200px; color: var(--text-muted);
+      gap: 10px;
+    }
+
+    /* ===== Tab panels ===== */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ===== Scrollbar ===== */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-primary); }
+    ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* ===== Expiry selector ===== */
+    .expiry-select {
+      background: var(--bg-card2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 10px;
+      color: var(--text);
+      font-size: 12px;
+    }
+    .section-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+
+    /* ===== SR Levels ===== */
+    .sr-level {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 4px 0; border-bottom: 1px solid rgba(33,38,45,0.4);
+    }
+    .sr-label { font-size: 11px; color: var(--text-muted); }
+    .sr-value { font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+
+    /* ===== Toast notifications ===== */
+    #toast {
+      position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 16px;
+      font-size: 13px; max-width: 300px;
+      transition: opacity 0.3s, transform 0.3s;
+      opacity: 0; transform: translateY(10px);
+      pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.success { border-color: var(--green); }
+    #toast.error   { border-color: var(--red); }
+
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .grid-4, .grid-3 { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="layout">
+  <!-- ===== NAVBAR ===== -->
+  <nav class="navbar">
+    <div class="logo">F&amp;<span>O</span> Analyzer</div>
+    <div class="nav-prices">
+      <div class="nav-index">
+        <span class="label">NIFTY</span>
+        <span class="price" id="nav-nifty-price">—</span>
+        <span class="change" id="nav-nifty-change">—</span>
+      </div>
+      <div class="nav-index">
+        <span class="label">SENSEX</span>
+        <span class="price" id="nav-sensex-price">—</span>
+        <span class="change" id="nav-sensex-change">—</span>
+      </div>
+      <div class="nav-vix">
+        <span style="color:var(--text-muted);font-size:11px">VIX</span>
+        <span class="vix-val" id="nav-vix">—</span>
+      </div>
+    </div>
+    <div class="nav-right">
+      <span class="conn-dot" id="conn-dot" title="WebSocket status"></span>
+      <span id="market-time" style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)"></span>
+      <button class="btn-login" id="login-btn" onclick="handleLogin()">Login</button>
+    </div>
+  </nav>
+
+  <!-- ===== SIDEBAR ===== -->
+  <aside class="sidebar">
+    <nav>
+      <div class="nav-item active" onclick="switchTab('dashboard')" data-tab="dashboard">
+        <span class="nav-icon">📊</span> Dashboard
+      </div>
+      <div class="nav-item" onclick="switchTab('option-chain')" data-tab="option-chain">
+        <span class="nav-icon">⛓️</span> Option Chain
+      </div>
+      <div class="nav-item" onclick="switchTab('technical')" data-tab="technical">
+        <span class="nav-icon">📈</span> Technical
+      </div>
+      <div class="nav-item" onclick="switchTab('signals')" data-tab="signals">
+        <span class="nav-icon">🎯</span> Signals
+      </div>
+      <div class="nav-item" onclick="switchTab('oi-history')" data-tab="oi-history">
+        <span class="nav-icon">🗂️</span> OI History
+      </div>
+      <div class="nav-item" onclick="switchTab('positions')" data-tab="positions">
+        <span class="nav-icon">💼</span> Positions
+      </div>
+    </nav>
+  </aside>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main class="main">
+
+    <!-- ===== DASHBOARD TAB ===== -->
+    <div class="tab-panel active" id="tab-dashboard">
+      <div class="grid-2 gap-4" style="grid-template-columns:260px 1fr">
+
+        <!-- Sentiment Gauge -->
+        <div class="card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
+          <div class="card-title" style="text-align:center">Market Sentiment</div>
+          <div class="gauge-container" id="gauge-container">
+            <svg class="gauge-svg" id="gauge-svg" width="180" height="110" viewBox="0 0 180 110">
+              <!-- Background arc -->
+              <path d="M20,95 A75,75 0 0,1 160,95" fill="none" stroke="#21262d" stroke-width="14" stroke-linecap="round"/>
+              <!-- Colored segments -->
+              <path id="gauge-fill" d="M20,95 A75,75 0 0,1 160,95" fill="none" stroke="#ffd700" stroke-width="14" stroke-linecap="round" stroke-dasharray="235.6" stroke-dashoffset="118"/>
+              <!-- Needle -->
+              <line id="gauge-needle" x1="90" y1="95" x2="90" y2="30" stroke="#f0f6fc" stroke-width="2" stroke-linecap="round" transform="rotate(0,90,95)"/>
+              <circle cx="90" cy="95" r="5" fill="#f0f6fc"/>
+            </svg>
+            <div class="gauge-label" id="gauge-label" style="color:var(--yellow)">NEUTRAL</div>
+            <div class="gauge-score" id="gauge-score">Score: 0</div>
+          </div>
+        </div>
+
+        <!-- Sentiment Components -->
+        <div class="card">
+          <div class="card-title">Sentiment Drivers</div>
+          <table class="data-table" id="sentiment-table">
+            <thead><tr><th>Factor</th><th>Value</th><th>Signal</th><th>Score</th></tr></thead>
+            <tbody><tr><td colspan="4" class="loading-overlay"><div class="spinner"></div> Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Signal Cards -->
+      <div class="grid-2 mt-3">
+        <div id="nifty-signal-card">
+          <div class="loading-overlay"><div class="spinner"></div></div>
+        </div>
+        <div id="sensex-signal-card">
+          <div class="loading-overlay"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <!-- Metrics Row -->
+      <div class="grid-4 mt-3" id="metrics-row">
+        <div class="metric-card">
+          <div class="metric-label">NIFTY PCR</div>
+          <div class="metric-value" id="m-nifty-pcr">—</div>
+          <div class="metric-sub" id="m-nifty-pcr-sent">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">NIFTY Max Pain</div>
+          <div class="metric-value" id="m-nifty-mp">—</div>
+          <div class="metric-sub" id="m-nifty-dte">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Expected Move</div>
+          <div class="metric-value" id="m-exp-move">—</div>
+          <div class="metric-sub" id="m-exp-range">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">India VIX</div>
+          <div class="metric-value" id="m-vix">—</div>
+          <div class="metric-sub" id="m-vix-sub">—</div>
+        </div>
+      </div>
+
+      <!-- FII/DII + A/D -->
+      <div class="grid-2 mt-3">
+        <div class="card">
+          <div class="card-title">FII / DII Activity</div>
+          <table class="data-table" id="fii-table">
+            <thead>
+              <tr>
+                <th>Participant</th>
+                <th>Buy (Cr)</th>
+                <th>Sell (Cr)</th>
+                <th>Net (Cr)</th>
+                <th>Bias</th>
+              </tr>
+            </thead>
+            <tbody id="fii-tbody">
+              <tr><td colspan="5" style="text-align:center;color:var(--text-muted)">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
+          <div class="card-title">Market Breadth</div>
+          <div id="breadth-content">
+            <div class="loading-overlay"><div class="spinner"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== OPTION CHAIN TAB ===== -->
+    <div class="tab-panel" id="tab-option-chain">
+      <div class="section-controls">
+        <button class="index-btn active" onclick="setChainIndex('NIFTY')" id="chain-nifty-btn">NIFTY</button>
+        <button class="index-btn" onclick="setChainIndex('SENSEX')" id="chain-sensex-btn">SENSEX</button>
+        <select class="expiry-select" id="chain-expiry" onchange="loadOptionChain()">
+          <option value="">Loading...</option>
+        </select>
+        <button class="interval-btn" onclick="loadOptionChain()" style="margin-left:auto">↻ Refresh</button>
+      </div>
+      <div class="grid-4 mt-2" id="chain-metrics">
+        <div class="metric-card">
+          <div class="metric-label">PCR (OI)</div>
+          <div class="metric-value" id="chain-pcr">—</div>
+          <div class="metric-sub" id="chain-pcr-sent">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Max Pain</div>
+          <div class="metric-value" id="chain-maxpain">—</div>
+          <div class="metric-sub" id="chain-dte">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Call Resistance</div>
+          <div class="metric-value num-red" id="chain-resistance">—</div>
+          <div class="metric-sub">Highest CE OI buildup</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Put Support</div>
+          <div class="metric-value num-green" id="chain-support">—</div>
+          <div class="metric-sub">Highest PE OI buildup</div>
+        </div>
+      </div>
+      <!-- CE vs PE OI Summary Bar -->
+      <div id="chain-oi-summary" style="display:none;margin:10px 0;padding:10px 14px;background:#161b22;border-radius:8px;border:1px solid #21262d">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:12px">
+          <span style="color:#ff6b6b">CE Total OI: <b id="chain-total-ce-oi">—</b></span>
+          <span style="color:#8b949e;font-size:11px">PCR = PE OI ÷ CE OI</span>
+          <span style="color:#00d964">PE Total OI: <b id="chain-total-pe-oi">—</b></span>
+        </div>
+        <div style="display:flex;height:10px;border-radius:4px;overflow:hidden;background:#21262d">
+          <div id="chain-ce-bar" style="background:#ff6b6b;height:100%;transition:width 0.4s"></div>
+          <div id="chain-pe-bar" style="background:#00d964;height:100%;transition:width 0.4s"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#8b949e;margin-top:4px">
+          <span id="chain-ce-pct">—</span>
+          <span id="chain-pe-pct">—</span>
+        </div>
+      </div>
+
+      <div class="card mt-3" style="padding:0;overflow:hidden">
+        <div style="overflow-x:auto;max-height:calc(100vh - 320px);overflow-y:auto">
+          <table class="chain-table" id="chain-table">
+            <thead>
+              <tr>
+                <!-- CE Side (right-to-left layout) -->
+                <th style="text-align:right">OI Bar</th>
+                <th style="text-align:right">OI%</th>
+                <th style="text-align:right">CE OI</th>
+                <th style="text-align:right">OI Chng</th>
+                <th style="text-align:right">IV%</th>
+                <th style="text-align:right">LTP</th>
+                <!-- Strike -->
+                <th class="center" style="min-width:80px;background:#1c2128">STRIKE</th>
+                <!-- PE Side (left-to-right layout) -->
+                <th>LTP</th>
+                <th>IV%</th>
+                <th>OI Chng</th>
+                <th>PE OI</th>
+                <th>OI%</th>
+                <th>OI Bar</th>
+              </tr>
+            </thead>
+            <tbody id="chain-tbody">
+              <tr><td colspan="13" class="loading-overlay"><div class="spinner"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== TECHNICAL TAB ===== -->
+    <div class="tab-panel" id="tab-technical">
+      <div class="section-controls">
+        <button class="index-btn active" onclick="setTechIndex('NIFTY')" id="tech-nifty-btn">NIFTY</button>
+        <button class="index-btn" onclick="setTechIndex('SENSEX')" id="tech-sensex-btn">SENSEX</button>
+        <div class="interval-bar" id="interval-bar">
+          <button class="interval-btn" onclick="setInterval_('5minute')">5m</button>
+          <button class="interval-btn active" onclick="setInterval_('15minute')">15m</button>
+          <button class="interval-btn" onclick="setInterval_('30minute')">30m</button>
+          <button class="interval-btn" onclick="setInterval_('60minute')">1h</button>
+          <button class="interval-btn" onclick="setInterval_('day')">1D</button>
+        </div>
+        <button class="interval-btn" onclick="loadChart()" style="margin-left:auto">↻ Refresh</button>
+      </div>
+
+      <div id="chart-container"></div>
+
+      <div class="indicator-cards" id="indicator-cards">
+        <div class="ind-card">
+          <div class="ind-title">RSI (14)</div>
+          <div class="ind-value" id="ind-rsi" style="color:var(--yellow)">—</div>
+          <div class="rsi-bar"><div class="rsi-fill" id="rsi-fill" style="width:50%;background:var(--yellow)"></div></div>
+          <div class="ind-sub" id="ind-rsi-sig">—</div>
+        </div>
+        <div class="ind-card">
+          <div class="ind-title">MACD</div>
+          <div class="ind-value" id="ind-macd">—</div>
+          <div class="ind-sub" id="ind-macd-sig">—</div>
+        </div>
+        <div class="ind-card">
+          <div class="ind-title">Bollinger Bands</div>
+          <div class="ind-value" id="ind-bb">—</div>
+          <div class="ind-sub" id="ind-bb-sig">—</div>
+        </div>
+        <div class="ind-card">
+          <div class="ind-title">Supertrend</div>
+          <div class="ind-value" id="ind-st">—</div>
+          <div class="ind-sub" id="ind-st-lvl">—</div>
+        </div>
+        <div class="ind-card">
+          <div class="ind-title">EMA 20/50</div>
+          <div class="ind-value" id="ind-ema">—</div>
+          <div class="ind-sub" id="ind-ema-trend">—</div>
+        </div>
+        <div class="ind-card">
+          <div class="ind-title">VWAP</div>
+          <div class="ind-value" id="ind-vwap">—</div>
+          <div class="ind-sub" id="ind-vwap-sig">—</div>
+        </div>
+        <div class="ind-card">
+          <div class="ind-title">Stochastic</div>
+          <div class="ind-value" id="ind-stoch">—</div>
+          <div class="ind-sub" id="ind-stoch-sig">—</div>
+        </div>
+        <div class="ind-card">
+          <div class="ind-title">ATR (14)</div>
+          <div class="ind-value" id="ind-atr">—</div>
+          <div class="ind-sub" id="ind-atr-sub">Volatility</div>
+        </div>
+      </div>
+
+      <!-- Pivot table -->
+      <div class="grid-2 mt-3">
+        <div class="card">
+          <div class="card-title">Pivot Points (Classic)</div>
+          <div id="pivot-classic">
+            <div class="pivot-grid" id="pivot-grid">
+              <div class="pivot-cell header">Level</div>
+              <div class="pivot-cell header">Classic</div>
+              <div class="pivot-cell header">Fibonacci</div>
+              <div class="pivot-cell header">Camarilla</div>
+              <div class="pivot-cell level">R3</div><div class="pivot-cell r" id="p-c-r3">—</div><div class="pivot-cell r" id="p-f-r3">—</div><div class="pivot-cell r" id="p-ca-r4">—</div>
+              <div class="pivot-cell level">R2</div><div class="pivot-cell r" id="p-c-r2">—</div><div class="pivot-cell r" id="p-f-r2">—</div><div class="pivot-cell r" id="p-ca-r3">—</div>
+              <div class="pivot-cell level">R1</div><div class="pivot-cell r" id="p-c-r1">—</div><div class="pivot-cell r" id="p-f-r1">—</div><div class="pivot-cell r" id="p-ca-r2">—</div>
+              <div class="pivot-cell level">Pivot</div><div class="pivot-cell p" id="p-c-pp">—</div><div class="pivot-cell p" id="p-f-pp">—</div><div class="pivot-cell p" id="p-ca-pp">—</div>
+              <div class="pivot-cell level">S1</div><div class="pivot-cell s" id="p-c-s1">—</div><div class="pivot-cell s" id="p-f-s1">—</div><div class="pivot-cell s" id="p-ca-s2">—</div>
+              <div class="pivot-cell level">S2</div><div class="pivot-cell s" id="p-c-s2">—</div><div class="pivot-cell s" id="p-f-s2">—</div><div class="pivot-cell s" id="p-ca-s3">—</div>
+              <div class="pivot-cell level">S3</div><div class="pivot-cell s" id="p-c-s3">—</div><div class="pivot-cell s" id="p-f-s3">—</div><div class="pivot-cell s" id="p-ca-s4">—</div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Support &amp; Resistance</div>
+          <div id="sr-levels">
+            <div class="loading-overlay"><div class="spinner"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== SIGNALS TAB ===== -->
+    <div class="tab-panel" id="tab-signals">
+      <div class="section-controls">
+        <button class="index-btn active" onclick="setSigIndex('NIFTY')" id="sig-nifty-btn">NIFTY</button>
+        <button class="index-btn" onclick="setSigIndex('SENSEX')" id="sig-sensex-btn">SENSEX</button>
+        <button class="interval-btn" onclick="loadSignals()" style="margin-left:auto">↻ Refresh</button>
+      </div>
+      <div id="signal-detail-card">
+        <div class="loading-overlay"><div class="spinner"></div></div>
+      </div>
+      <div class="mt-3">
+        <div class="card-title" style="margin-bottom:12px">Suggested Strategies</div>
+        <div id="strategies-container">
+          <div class="loading-overlay"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== OI HISTORY TAB ===== -->
+    <div class="tab-panel" id="tab-oi-history">
+      <div class="section-controls" style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+        <select id="oih-index" onchange="loadOIHistory()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;padding:6px 12px;border-radius:6px;font-size:13px">
+          <option value="NIFTY">NIFTY</option>
+          <option value="SENSEX">SENSEX</option>
+        </select>
+        <select id="oih-expiry" onchange="loadOIHistory()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;padding:6px 12px;border-radius:6px;font-size:13px"></select>
+        <select id="oih-days" onchange="loadOIHistory()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;padding:6px 12px;border-radius:6px;font-size:13px">
+          <option value="5">Last 5 Days</option>
+          <option value="10">Last 10 Days</option>
+          <option value="22" selected>Last 1 Month</option>
+        </select>
+        <span id="oih-status" style="color:#8b949e;font-size:12px"></span>
+      </div>
+
+      <!-- Trend Summary Cards -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:18px" id="oih-summary-cards">
+        <div class="metric-card"><div class="metric-label">PCR Start→End</div><div class="metric-value" id="oih-pcr-trend">—</div></div>
+        <div class="metric-card"><div class="metric-label">Max Pain Move</div><div class="metric-value" id="oih-mp-trend">—</div></div>
+        <div class="metric-card"><div class="metric-label">IV Start→End</div><div class="metric-value" id="oih-iv-trend">—</div></div>
+        <div class="metric-card"><div class="metric-label">Spot Move</div><div class="metric-value" id="oih-spot-trend">—</div></div>
+        <div class="metric-card"><div class="metric-label">Avg PCR</div><div class="metric-value" id="oih-pcr-avg">—</div></div>
+      </div>
+
+      <!-- Daily History Table -->
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:18px">
+        <div style="padding:12px 16px;border-bottom:1px solid #21262d;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-weight:600;font-size:14px">Daily Option Chain Snapshots</span>
+          <span style="font-size:11px;color:#8b949e">Past month — each row = end of day OI snapshot</span>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="oih-daily-table">
+            <thead>
+              <tr>
+                <th style="text-align:left">Date</th>
+                <th>Spot</th>
+                <th>ATM</th>
+                <th>DTE</th>
+                <th>ATM IV</th>
+                <th>PCR</th>
+                <th>Sentiment</th>
+                <th>Max Pain</th>
+                <th>MP vs Spot</th>
+                <th>Total CE OI</th>
+                <th>Total PE OI</th>
+                <th>Top CE Wall</th>
+                <th>Top PE Wall</th>
+              </tr>
+            </thead>
+            <tbody id="oih-daily-body">
+              <tr><td colspan="13" style="text-align:center;color:#8b949e;padding:30px">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Per-day Chain Viewer -->
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="padding:12px 16px;border-bottom:1px solid #21262d;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-weight:600;font-size:14px">📅 Strike-wise OI — <span id="oih-chain-date">select a row above</span></span>
+          <span style="font-size:11px;color:#8b949e">Click any row above to see full strike chain</span>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="oih-chain-table">
+            <thead>
+              <tr>
+                <th>CE OI</th><th>CE Chg</th><th>CE IV</th><th>CE LTP</th>
+                <th style="background:#1c2128;color:#ffd700">Strike</th>
+                <th>PE LTP</th><th>PE IV</th><th>PE Chg</th><th>PE OI</th>
+              </tr>
+            </thead>
+            <tbody id="oih-chain-body">
+              <tr><td colspan="9" style="text-align:center;color:#8b949e;padding:20px">Click a date row above</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== POSITIONS TAB ===== -->
+    <div class="tab-panel" id="tab-positions">
+      <div class="section-controls">
+        <button class="interval-btn" onclick="loadPositions()">↻ Refresh</button>
+        <span id="pos-auth-badge"></span>
+      </div>
+      <div class="card">
+        <div class="card-title">Open Positions</div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Product</th>
+              <th>Qty</th>
+              <th>Avg Price</th>
+              <th>LTP</th>
+              <th>P&L</th>
+              <th>Day P&L</th>
+            </tr>
+          </thead>
+          <tbody id="positions-tbody">
+            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Login to view positions</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card mt-3">
+        <div class="card-title">Today's Orders</div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Symbol</th>
+              <th>Type</th>
+              <th>Qty</th>
+              <th>Price</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="orders-tbody">
+            <tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px">Login to view orders</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- ===== ORDER MODAL ===== -->
+<div class="modal-overlay" id="order-modal">
+  <div class="modal">
+    <div class="modal-title">Place Order</div>
+    <div class="modal-field">
+      <label>Symbol</label>
+      <input type="text" id="order-symbol" readonly />
+    </div>
+    <div class="grid-2 gap-2">
+      <div class="modal-field">
+        <label>Exchange</label>
+        <select id="order-exchange">
+          <option value="NFO">NFO</option>
+          <option value="BFO">BFO</option>
+          <option value="NSE">NSE</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label>Transaction</label>
+        <select id="order-txn">
+          <option value="BUY">BUY</option>
+          <option value="SELL">SELL</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label>Qty (Lots)</label>
+        <input type="number" id="order-qty" value="1" min="1" />
+      </div>
+      <div class="modal-field">
+        <label>Order Type</label>
+        <select id="order-type" onchange="togglePrice()">
+          <option value="MARKET">MARKET</option>
+          <option value="LIMIT">LIMIT</option>
+          <option value="SL">SL</option>
+          <option value="SL-M">SL-M</option>
+        </select>
+      </div>
+      <div class="modal-field" id="price-field" style="display:none">
+        <label>Price</label>
+        <input type="number" id="order-price" step="0.05" />
+      </div>
+      <div class="modal-field">
+        <label>Product</label>
+        <select id="order-product">
+          <option value="MIS">MIS (Intraday)</option>
+          <option value="NRML">NRML (Carry)</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-confirm" onclick="confirmOrder()">Confirm Order</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== TOAST ===== -->
+<div id="toast"></div>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+const state = {
+  tab: 'dashboard',
+  techIndex: 'NIFTY',
+  chainIndex: 'NIFTY',
+  sigIndex: 'NIFTY',
+  interval: '15minute',
+  chainExpiry: '',
+  authenticated: false,
+  wsConnected: false,
+  chart: null,
+  candleSeries: null,
+  dashboardData: null,
+  orderParams: {},
+};
+
+// ============================================================
+// Tab switching
+// ============================================================
+function switchTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+
+  if (tab === 'technical')   loadChart();
+  if (tab === 'option-chain') loadOptionChain();
+  if (tab === 'signals')      loadSignals();
+  if (tab === 'positions')    loadPositions();
+  if (tab === 'oi-history')   initOIHistoryTab();
+}
+
+// ============================================================
+// Navbar clock
+// ============================================================
+function updateClock() {
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' });
+  document.getElementById('market-time').textContent = timeStr + ' IST';
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ============================================================
+// WebSocket — live prices
+// ============================================================
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/live`);
+
+  ws.onopen = () => {
+    state.wsConnected = true;
+    document.getElementById('conn-dot').classList.add('live');
+  };
+  ws.onclose = () => {
+    state.wsConnected = false;
+    document.getElementById('conn-dot').classList.remove('live');
+    setTimeout(connectWS, 3000);
+  };
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'live_quote') {
+      updateNavPrice('nifty', d.nifty);
+      updateNavPrice('sensex', d.sensex);
+      document.getElementById('nav-vix').textContent = fmt(d.vix, 2);
+      document.getElementById('m-vix').textContent = fmt(d.vix, 2);
+    }
+  };
+}
+
+function updateNavPrice(idx, data) {
+  const priceEl = document.getElementById(`nav-${idx}-price`);
+  const changeEl = document.getElementById(`nav-${idx}-change`);
+  const oldPrice = parseFloat(priceEl.textContent.replace(/,/g, '')) || 0;
+  const newPrice = data.price;
+
+  priceEl.textContent = fmtNum(newPrice);
+  changeEl.textContent = `${data.change >= 0 ? '+' : ''}${fmt(data.change, 2)} (${fmt(data.change_pct, 2)}%)`;
+  changeEl.className = 'change ' + (data.change >= 0 ? 'up' : 'down');
+
+  if (oldPrice && newPrice !== oldPrice) {
+    priceEl.classList.remove('flash-green', 'flash-red');
+    void priceEl.offsetWidth;
+    priceEl.classList.add(newPrice > oldPrice ? 'flash-green' : 'flash-red');
+  }
+}
+
+// ============================================================
+// Formatting helpers
+// ============================================================
+function fmt(n, d=2) { return n == null ? '—' : parseFloat(n).toFixed(d); }
+function fmtNum(n) {
+  if (n == null) return '—';
+  return parseFloat(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtOI(n) {
+  if (!n) return '—';
+  if (n >= 10000000) return (n/10000000).toFixed(2) + 'Cr';
+  if (n >= 100000)   return (n/100000).toFixed(2) + 'L';
+  if (n >= 1000)     return (n/1000).toFixed(1) + 'K';
+  return n.toString();
+}
+function colorClass(n) { return n >= 0 ? 'num-green' : 'num-red'; }
+function biasColor(b) {
+  if (b === 'BULLISH' || b === 'UPTREND' || b === 'STRONGLY_BULLISH') return 'var(--green)';
+  if (b === 'BEARISH' || b === 'DOWNTREND' || b === 'STRONGLY_BEARISH') return 'var(--red)';
+  return 'var(--yellow)';
+}
+
+// ============================================================
+// Dashboard loading
+// ============================================================
+async function loadDashboard() {
+  try {
+    const res = await fetch('/api/dashboard');
+    if (!res.ok) return;
+    const d = await res.json();
+    state.dashboardData = d;
+    state.authenticated = d.authenticated;
+
+    updateLoginBtn(d.authenticated);
+    renderSentimentGauge(d.sentiment);
+    renderSentimentTable(d.sentiment);
+    renderSignalCard('nifty-signal-card', 'NIFTY', d.nifty);
+    renderSignalCard('sensex-signal-card', 'SENSEX', d.sensex);
+    renderMetricsRow(d);
+    renderFiiDii(d.fii_dii);
+    renderBreadth(d.advance_decline);
+  } catch (e) {
+    console.error('Dashboard load error:', e);
+  }
+}
+
+function renderSentimentGauge(s) {
+  if (!s) return;
+  const val = s.gauge_value || 50; // 0-100
+  const label = s.label || 'NEUTRAL';
+  const score = s.score || 0;
+
+  // Rotate needle: 0 = leftmost (bearish), 100 = rightmost (bullish)
+  // Arc goes from -90° to +90° → rotation maps 0-100 to -90 to +90
+  const angle = (val / 100) * 180 - 90;
+  document.getElementById('gauge-needle').setAttribute('transform', `rotate(${angle},90,95)`);
+
+  const color = biasColor(label);
+  document.getElementById('gauge-fill').setAttribute('stroke', color);
+  // Adjust dash offset to show proportion (235.6 = full arc length)
+  const offset = 235.6 - (val / 100) * 235.6;
+  document.getElementById('gauge-fill').setAttribute('stroke-dashoffset', offset);
+
+  document.getElementById('gauge-label').textContent = label.replace(/_/g, ' ');
+  document.getElementById('gauge-label').style.color = color;
+  document.getElementById('gauge-score').textContent = `Score: ${score}`;
+}
+
+function renderSentimentTable(s) {
+  if (!s || !s.components) return;
+  const c = s.components;
+  const rows = [
+    { name: 'PCR (OI)', value: fmt(c.pcr?.value, 3), label: c.pcr?.label, score: c.pcr?.score },
+    { name: 'India VIX', value: fmt(c.vix?.value, 2), label: c.vix?.label, score: c.vix?.score },
+    { name: 'Adv/Dec Ratio', value: fmt(c.advance_decline?.value, 3), label: c.advance_decline?.label, score: c.advance_decline?.score },
+    { name: 'FII Net (Cr)', value: fmt(c.fii?.value, 0), label: c.fii?.label, score: c.fii?.score },
+  ];
+  const html = rows.map(r => `
+    <tr>
+      <td>${r.name}</td>
+      <td style="font-family:var(--font-mono)">${r.value}</td>
+      <td style="color:${biasColor(r.label || '')};font-size:11px">${(r.label||'—').replace(/_/g,' ')}</td>
+      <td style="font-family:var(--font-mono);${(r.score||0)>=0?'color:var(--green)':'color:var(--red)'}">${(r.score||0) > 0 ? '+' : ''}${r.score||0}</td>
+    </tr>`).join('');
+  document.querySelector('#sentiment-table tbody').innerHTML = html;
+}
+
+function renderSignalCard(containerId, index, data) {
+  if (!data || !data.signal) return;
+  const s = data.signal;
+  const action = (s.action || 'WAIT').toLowerCase();
+  const conf = (s.confidence || 'LOW').toLowerCase();
+  document.getElementById(containerId).innerHTML = `
+    <div class="signal-card ${action}">
+      <div class="signal-header">
+        <div>
+          <div class="signal-index">${index} — ${s.instrument || ''}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${s.strategy || ''}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="signal-action ${action}">${s.action || 'WAIT'}</span>
+          <span class="badge ${conf}">${s.confidence || 'LOW'}</span>
+        </div>
+      </div>
+      <div class="signal-grid">
+        <div class="signal-field"><label>Entry</label><div class="val">${fmtNum(s.entry_price)}</div></div>
+        <div class="signal-field"><label>Target</label><div class="val target">${fmtNum(s.target)}</div></div>
+        <div class="signal-field"><label>Stop Loss</label><div class="val sl">${fmtNum(s.stop_loss)}</div></div>
+        <div class="signal-field"><label>R:R</label><div class="val">${s.rr_label || '—'}</div></div>
+        <div class="signal-field"><label>Expiry</label><div class="val" style="font-size:11px">${s.expiry || '—'}</div></div>
+        <div class="signal-field"><label>Bias</label><div class="val" style="color:${biasColor(data.technical?.bias)}">${data.technical?.bias || '—'}</div></div>
+      </div>
+    </div>`;
+}
+
+function renderMetricsRow(d) {
+  const n = d.nifty || {};
+  document.getElementById('m-nifty-pcr').textContent = fmt(n.pcr, 3);
+  const pcr = n.pcr || 1;
+  document.getElementById('m-nifty-pcr-sent').textContent = pcr > 1.2 ? '↑ Bullish' : pcr < 0.8 ? '↓ Bearish' : '→ Neutral';
+  document.getElementById('m-nifty-mp').textContent = fmtNum(n.max_pain);
+  document.getElementById('m-nifty-dte').textContent = `${n.dte || 0} days to expiry`;
+  const em = n.expected_move || {};
+  document.getElementById('m-exp-move').textContent = `±${fmt(em.pct_move, 1)}%`;
+  document.getElementById('m-exp-range').textContent = `${fmtNum(em.lower)} – ${fmtNum(em.upper)}`;
+  const vix = d.indices?.vix?.last_price;
+  document.getElementById('m-vix').textContent = fmt(vix, 2);
+  document.getElementById('m-vix-sub').textContent = vix < 13 ? 'Low fear' : vix < 20 ? 'Normal' : 'Elevated fear';
+}
+
+function renderFiiDii(f) {
+  if (!f) return;
+  const rows = [
+    ['FII', f.latest_fii_net > 0 ? fmt(f.latest_fii_net, 0) : '—',
+           f.latest_fii_net < 0 ? fmt(-f.latest_fii_net, 0) : '—',
+           f.latest_fii_net, f.fii_sentiment],
+    ['DII', f.latest_dii_net > 0 ? fmt(f.latest_dii_net, 0) : '—',
+           f.latest_dii_net < 0 ? fmt(-f.latest_dii_net, 0) : '—',
+           f.latest_dii_net, f.dii_sentiment],
+  ];
+  document.getElementById('fii-tbody').innerHTML = rows.map(r => `
+    <tr>
+      <td><b>${r[0]}</b></td>
+      <td class="num-green">${r[1]}</td>
+      <td class="num-red">${r[2]}</td>
+      <td class="${r[3] >= 0 ? 'num-green' : 'num-red'}">${r[3] >= 0 ? '+' : ''}${fmt(r[3], 0)}</td>
+      <td style="color:${biasColor(r[4])};font-size:11px">${(r[4]||'').replace(/_/g,' ')}</td>
+    </tr>`).join('');
+}
+
+function renderBreadth(ad) {
+  if (!ad) return;
+  const color = ad.ratio >= 1 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('breadth-content').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="metric-card">
+        <div class="metric-label">A/D Ratio</div>
+        <div class="metric-value" style="color:${color}">${fmt(ad.ratio, 2)}</div>
+        <div class="metric-sub">${(ad.breadth||'').replace(/_/g,' ')}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Advances</div>
+        <div class="metric-value num-green">${ad.advances || 0}</div>
+        <div class="metric-sub">${ad.pct_advancing || 0}% stocks up</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Declines</div>
+        <div class="metric-value num-red">${ad.declines || 0}</div>
+        <div class="metric-sub">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Net</div>
+        <div class="metric-value" style="color:${color}">${ad.net >= 0 ? '+' : ''}${ad.net || 0}</div>
+        <div class="metric-sub">Unchanged: ${ad.unchanged || 0}</div>
+      </div>
+    </div>`;
+}
+
+// ============================================================
+// Option Chain
+// ============================================================
+let chainIndexState = 'NIFTY';
+
+function setChainIndex(idx) {
+  chainIndexState = idx;
+  document.getElementById('chain-nifty-btn').classList.toggle('active', idx === 'NIFTY');
+  document.getElementById('chain-sensex-btn').classList.toggle('active', idx === 'SENSEX');
+  populateExpirySelect();
+  loadOptionChain();
+}
+
+async function populateExpirySelect() {
+  try {
+    const res = await fetch(`/api/option-chain/${chainIndexState}`);
+    const d = await res.json();
+    const sel = document.getElementById('chain-expiry');
+    const expiries = d.expiry_list || [d.expiry];
+    sel.innerHTML = expiries.map(e => `<option value="${e}">${e}</option>`).join('');
+    if (expiries.length) state.chainExpiry = expiries[0];
+  } catch(e) {}
+}
+
+async function loadOptionChain() {
+  const expiry = document.getElementById('chain-expiry').value || '';
+  const url = `/api/option-chain/${chainIndexState}${expiry ? '?expiry=' + expiry : ''}`;
+  document.getElementById('chain-tbody').innerHTML = `<tr><td colspan="11" class="loading-overlay"><div class="spinner"></div></td></tr>`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.statusText);
+    const d = await res.json();
+
+    // Metrics
+    const pcr = d.pcr || {};
+    document.getElementById('chain-pcr').textContent = fmt(pcr.pcr_oi, 3);
+    document.getElementById('chain-pcr-sent').textContent = (pcr.sentiment||'').replace(/_/g,' ');
+    document.getElementById('chain-maxpain').textContent = fmtNum(d.max_pain);
+    document.getElementById('chain-dte').textContent = `${d.dte || 0} days`;
+    document.getElementById('chain-resistance').textContent = fmtNum(d.oi_analysis?.call_resistance);
+    document.getElementById('chain-support').textContent = fmtNum(d.oi_analysis?.put_support);
+
+    // Separate max OI for CE and PE sides — bars are independent
+    const ceOIs = d.chain.map(r => r.CE?.oi || 0);
+    const peOIs = d.chain.map(r => r.PE?.oi || 0);
+    const maxCEOI = Math.max(...ceOIs, 1);
+    const maxPEOI = Math.max(...peOIs, 1);
+    const totalCEOI = ceOIs.reduce((a,b) => a+b, 0);
+    const totalPEOI = peOIs.reduce((a,b) => a+b, 0);
+    const totalOI   = totalCEOI + totalPEOI || 1;
+
+    // Update CE vs PE summary bar
+    const cePct = Math.round(totalCEOI / totalOI * 100);
+    const pePct = 100 - cePct;
+    document.getElementById('chain-oi-summary').style.display = 'block';
+    document.getElementById('chain-total-ce-oi').textContent = fmtOI(totalCEOI);
+    document.getElementById('chain-total-pe-oi').textContent = fmtOI(totalPEOI);
+    document.getElementById('chain-ce-bar').style.width = cePct + '%';
+    document.getElementById('chain-pe-bar').style.width = pePct + '%';
+    document.getElementById('chain-ce-pct').textContent = `CE ${cePct}%`;
+    document.getElementById('chain-pe-pct').textContent = `PE ${pePct}%`;
+
+    const atm = d.atm_strike;
+    const BAR_MAX_W = 60; // px
+    const rows = d.chain.map(row => {
+      const isATM  = row.strike === atm;
+      const ce     = row.CE || {};
+      const pe     = row.PE || {};
+      const ceOI   = ce.oi || 0;
+      const peOI   = pe.oi || 0;
+      const ceOIChg = ce.oi_change || 0;
+      const peOIChg = pe.oi_change || 0;
+
+      // % of total for each side
+      const cePctOI = totalCEOI ? (ceOI / totalCEOI * 100).toFixed(1) : '0.0';
+      const pePctOI = totalPEOI ? (peOI / totalPEOI * 100).toFixed(1) : '0.0';
+
+      // Bar widths — CE bar grows right-to-left (text-align:right), PE grows left-to-right
+      const ceBarW  = Math.round((ceOI / maxCEOI) * BAR_MAX_W);
+      const peBarW  = Math.round((peOI / maxPEOI) * BAR_MAX_W);
+
+      // Color intensity based on % of total
+      const ceAlpha = Math.max(0.15, ceOI / maxCEOI * 0.6);
+      const peAlpha = Math.max(0.15, peOI / maxPEOI * 0.6);
+      const ceBg    = ceOI > maxCEOI * 0.4 ? `rgba(255,107,107,${ceAlpha})` : '';
+      const peBg    = peOI > maxPEOI * 0.4 ? `rgba(0,217,100,${peAlpha})` : '';
+
+      const chgColor = (v) => v >= 0 ? '#00d964' : '#ff4757';
+
+      return `
+        <tr class="${isATM ? 'atm' : ''}" style="${isATM ? 'background:rgba(255,215,0,0.06)' : ''}">
+          <!-- CE Side -->
+          <td style="text-align:right;background:${ceBg}">
+            <div style="display:flex;justify-content:flex-end;align-items:center;gap:4px">
+              <span style="font-size:10px;color:#8b949e">${cePctOI}%</span>
+              <div style="width:${ceBarW}px;height:8px;background:#ff6b6b;border-radius:2px;opacity:0.8"></div>
+            </div>
+          </td>
+          <td style="text-align:right;background:${ceBg};color:#ff9999;font-size:11px">${cePctOI}%</td>
+          <td style="text-align:right;background:${ceBg};font-weight:${ceOI>maxCEOI*0.4?'700':'400'}">${fmtOI(ceOI)}</td>
+          <td style="text-align:right;background:${ceBg};color:${chgColor(ceOIChg)};font-size:11px">${ceOIChg>=0?'+':''}${fmtOI(ceOIChg)}</td>
+          <td style="text-align:right;background:${ceBg};color:#8b949e">${fmt(ce.iv,1)}%</td>
+          <td style="text-align:right;background:${ceBg};font-weight:600;color:#e6edf3">${fmt(ce.ltp,2)}</td>
+          <!-- Strike -->
+          <td class="strike-cell" style="background:#1c2128;font-weight:700;font-size:13px;color:${isATM?'#ffd700':'#e6edf3'}">${row.strike}${isATM?' ★':''}</td>
+          <!-- PE Side -->
+          <td style="background:${peBg};font-weight:600;color:#e6edf3">${fmt(pe.ltp,2)}</td>
+          <td style="background:${peBg};color:#8b949e">${fmt(pe.iv,1)}%</td>
+          <td style="background:${peBg};color:${chgColor(peOIChg)};font-size:11px">${peOIChg>=0?'+':''}${fmtOI(peOIChg)}</td>
+          <td style="background:${peBg};font-weight:${peOI>maxPEOI*0.4?'700':'400'}">${fmtOI(peOI)}</td>
+          <td style="background:${peBg};color:#66d98a;font-size:11px">${pePctOI}%</td>
+          <td style="background:${peBg}">
+            <div style="display:flex;align-items:center;gap:4px">
+              <div style="width:${peBarW}px;height:8px;background:#00d964;border-radius:2px;opacity:0.8"></div>
+              <span style="font-size:10px;color:#8b949e">${pePctOI}%</span>
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
+    document.getElementById('chain-tbody').innerHTML = rows || '<tr><td colspan="13" style="text-align:center;color:var(--text-muted);padding:20px">No data</td></tr>';
+
+    // Scroll to ATM
+    setTimeout(() => {
+      const atmRow = document.querySelector('#chain-tbody .atm');
+      if (atmRow) atmRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 100);
+  } catch(e) {
+    document.getElementById('chain-tbody').innerHTML = `<tr><td colspan="13" style="text-align:center;color:var(--red);padding:20px">Error: ${e.message}</td></tr>`;
+  }
+}
+
+// ============================================================
+// Technical Chart
+// ============================================================
+let chartInstance = null;
+let candleSeriesInstance = null;
+let techIndexState = 'NIFTY';
+let intervalState = '15minute';
+
+function setTechIndex(idx) {
+  techIndexState = idx;
+  document.getElementById('tech-nifty-btn').classList.toggle('active', idx === 'NIFTY');
+  document.getElementById('tech-sensex-btn').classList.toggle('active', idx === 'SENSEX');
+  loadChart();
+}
+
+function setInterval_(interval) {
+  intervalState = interval;
+  document.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('active'));
+  const labels = {'minute':'1m','3minute':'3m','5minute':'5m','15minute':'15m','30minute':'30m','60minute':'1h','day':'1D'};
+  document.querySelectorAll('.interval-btn').forEach(b => {
+    if (b.textContent.trim() === (labels[interval] || interval)) b.classList.add('active');
+  });
+  loadChart();
+}
+
+function initChart() {
+  const container = document.getElementById('chart-container');
+  if (chartInstance) { chartInstance.remove(); chartInstance = null; }
+  chartInstance = LightweightCharts.createChart(container, {
+    width: container.clientWidth,
+    height: 460,
+    layout: { background: { color: '#0d1117' }, textColor: '#c9d1d9' },
+    grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#21262d' },
+    timeScale: { borderColor: '#21262d', timeVisible: true, secondsVisible: false },
+  });
+  candleSeriesInstance = chartInstance.addCandlestickSeries({
+    upColor: '#00d964', downColor: '#ff4757',
+    borderUpColor: '#00d964', borderDownColor: '#ff4757',
+    wickUpColor: '#00d964', wickDownColor: '#ff4757',
+  });
+
+  // Responsive resize
+  const ro = new ResizeObserver(entries => {
+    for (let e of entries) chartInstance.applyOptions({ width: e.contentRect.width });
+  });
+  ro.observe(container);
+}
+
+// Signal legend and list panel
+function renderSignalPanel(signals) {
+  let el = document.getElementById('chart-signal-panel');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'chart-signal-panel';
+    el.style.cssText = `
+      margin-top:12px; padding:10px 14px; background:#161b22;
+      border:1px solid #21262d; border-radius:8px; font-size:12px;
+    `;
+    document.getElementById('chart-container').insertAdjacentElement('afterend', el);
+  }
+
+  if (!signals.length) {
+    el.innerHTML = '<span style="color:#8b949e">No signals detected for this interval. Try a longer timeframe.</span>';
+    return;
+  }
+
+  const buys  = signals.filter(s => s.type === 'BUY');
+  const sells = signals.filter(s => s.type === 'SELL');
+
+  const rows = signals.slice().reverse().slice(0,8).map(s => {
+    const col   = s.type === 'BUY' ? '#00d964' : '#ff4757';
+    const arrow = s.type === 'BUY' ? '▲' : '▼';
+    const bg    = s.type === 'BUY' ? 'rgba(0,217,100,0.06)' : 'rgba(255,71,87,0.06)';
+    const str   = s.strength === 'STRONG' ? '●●●' : '●●○';
+    const dt    = new Date(s.time * 1000).toLocaleString('en-IN',{
+      day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', hour12:false
+    });
+    return `
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:6px 8px;
+                  background:${bg};border-radius:6px;margin-bottom:4px;border-left:3px solid ${col}">
+        <div style="min-width:24px;font-size:16px;color:${col};font-weight:700;line-height:1">${arrow}</div>
+        <div style="flex:1">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:${col};font-weight:700;font-size:13px">${s.type}</span>
+            <span style="color:#8b949e;font-size:11px">${dt}</span>
+            <span style="color:#ffd700;font-size:11px" title="Signal strength">${str}</span>
+            <span style="color:#e6edf3;font-weight:600">₹${s.price.toFixed(2)}</span>
+          </div>
+          <div style="color:#8b949e;font-size:11px;margin-top:2px">${(s.reasons||[]).join(' · ')}</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span style="font-weight:600;color:#e6edf3">📍 Trade Signals on Chart</span>
+      <span style="color:#8b949e;font-size:11px">
+        <span style="color:#00d964">▲ ${buys.length} BUY</span> &nbsp;
+        <span style="color:#ff4757">▼ ${sells.length} SELL</span>
+        &nbsp;· strength: ●●● Strong &nbsp; ●●○ Moderate
+      </span>
+    </div>
+    ${rows}
+    ${signals.length > 8 ? `<div style="color:#8b949e;font-size:11px;margin-top:4px">Showing latest 8 of ${signals.length} signals</div>` : ''}
+  `;
+}
+
+async function loadChart() {
+  if (!chartInstance) initChart();
+  try {
+    const days = intervalState === 'day' ? 365 : intervalState.includes('60') ? 30 : 22;
+    const res = await fetch(`/api/historical/${techIndexState}?interval=${intervalState}&days=${days}`);
+    const d = await res.json();
+    if (d.candles && d.candles.length > 0) {
+      candleSeriesInstance.setData(d.candles);
+      chartInstance.timeScale().fitContent();
+    }
+  } catch(e) {
+    console.error('Chart load error:', e);
+  }
+
+  // Load signals and overlay on chart
+  try {
+    const days = intervalState === 'day' ? 365 : intervalState.includes('60') ? 30 : 22;
+    const sr   = await fetch(`/api/chart-signals/${techIndexState}?interval=${intervalState}&days=${days}`);
+    const sd   = await sr.json();
+    const signals = sd.signals || [];
+
+    // Build lightweight-charts markers
+    const markers = signals.map(s => ({
+      time:     s.time,
+      position: s.type === 'BUY' ? 'belowBar' : 'aboveBar',
+      color:    s.type === 'BUY' ? '#00d964'  : '#ff4757',
+      shape:    s.type === 'BUY' ? 'arrowUp'  : 'arrowDown',
+      text:     s.strength === 'STRONG'
+                  ? (s.type === 'BUY' ? '▲ BUY' : '▼ SELL')
+                  : (s.type === 'BUY' ? '↑ Buy' : '↓ Sell'),
+      size:     s.strength === 'STRONG' ? 2 : 1,
+    }));
+
+    // Sort markers by time (required by lightweight-charts)
+    markers.sort((a, b) => a.time - b.time);
+    candleSeriesInstance.setMarkers(markers);
+
+    // Render signal list below chart
+    renderSignalPanel(signals);
+  } catch(e) {
+    console.error('Signal load error:', e);
+  }
+
+  // Load technical indicators
+  loadTechnicalIndicators();
+}
+
+async function loadTechnicalIndicators() {
+  try {
+    const res = await fetch(`/api/analysis/${techIndexState}?interval=${intervalState}&days=15`);
+    const d = await res.json();
+    const t = d.technical || {};
+
+    // RSI
+    const rsi = t.rsi || 50;
+    const rsiColor = rsi > 70 ? 'var(--red)' : rsi < 30 ? 'var(--green)' : 'var(--yellow)';
+    document.getElementById('ind-rsi').textContent = fmt(rsi);
+    document.getElementById('ind-rsi').style.color = rsiColor;
+    document.getElementById('rsi-fill').style.width = rsi + '%';
+    document.getElementById('rsi-fill').style.background = rsiColor;
+    document.getElementById('ind-rsi-sig').textContent = t.rsi_signal || '—';
+
+    // MACD
+    const macd = t.macd || {};
+    document.getElementById('ind-macd').textContent = fmt(macd.macd, 2);
+    document.getElementById('ind-macd').style.color = macd.signal_type === 'BULLISH' ? 'var(--green)' : macd.signal_type === 'BEARISH' ? 'var(--red)' : 'var(--yellow)';
+    document.getElementById('ind-macd-sig').textContent = (macd.signal_type||'').replace(/_/g,' ');
+
+    // BB
+    const bb = t.bb || {};
+    document.getElementById('ind-bb').textContent = fmt(bb.pct_b * 100, 0) + '%';
+    document.getElementById('ind-bb-sig').textContent = (bb.position||'').replace(/_/g,' ');
+
+    // Supertrend
+    const st = t.supertrend || {};
+    document.getElementById('ind-st').textContent = st.direction || '—';
+    document.getElementById('ind-st').style.color = st.direction === 'BULLISH' ? 'var(--green)' : 'var(--red)';
+    document.getElementById('ind-st-lvl').textContent = 'Level: ' + fmtNum(st.level);
+
+    // EMA
+    document.getElementById('ind-ema').textContent = fmtNum(t.ema_20);
+    document.getElementById('ind-ema-trend').textContent = t.trend || '—';
+    document.getElementById('ind-ema-trend').style.color = biasColor(t.trend);
+
+    // VWAP
+    document.getElementById('ind-vwap').textContent = fmtNum(t.vwap);
+    const vwapAbove = (t.current_price || 0) > (t.vwap || 0);
+    document.getElementById('ind-vwap-sig').textContent = vwapAbove ? '↑ Above VWAP' : '↓ Below VWAP';
+    document.getElementById('ind-vwap-sig').style.color = vwapAbove ? 'var(--green)' : 'var(--red)';
+
+    // Stoch
+    const stoch = t.stoch || {};
+    document.getElementById('ind-stoch').textContent = `K:${fmt(stoch.k)} D:${fmt(stoch.d)}`;
+    document.getElementById('ind-stoch-sig').textContent = stoch.signal || '—';
+
+    // ATR
+    document.getElementById('ind-atr').textContent = fmt(t.atr);
+
+    // Pivots
+    renderPivots(t.pivots);
+
+    // S/R
+    renderSR(t.support_resistance, t.current_price);
+  } catch(e) {
+    console.error('Indicators error:', e);
+  }
+}
+
+function renderPivots(p) {
+  if (!p) return;
+  const c = p.classic || {};
+  const f = p.fibonacci || {};
+  const ca = p.camarilla || {};
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = fmtNum(val); };
+  set('p-c-r3', c.r3); set('p-c-r2', c.r2); set('p-c-r1', c.r1); set('p-c-pp', c.pivot);
+  set('p-c-s1', c.s1); set('p-c-s2', c.s2); set('p-c-s3', c.s3);
+  set('p-f-r3', f.r3); set('p-f-r2', f.r2); set('p-f-r1', f.r1); set('p-f-pp', f.pivot);
+  set('p-f-s1', f.s1); set('p-f-s2', f.s2); set('p-f-s3', f.s3);
+  set('p-ca-r4', ca.r4); set('p-ca-r3', ca.r3); set('p-ca-r2', ca.r2); set('p-ca-pp', ca.pivot);
+  set('p-ca-s2', ca.s2); set('p-ca-s3', ca.s3); set('p-ca-s4', ca.s4);
+}
+
+function renderSR(sr, current) {
+  if (!sr) return;
+  const res = sr.resistance || [];
+  const sup = sr.support || [];
+  const rows = [
+    ...res.map((v, i) => `<div class="sr-level"><span class="sr-label">R${i+1}</span><span class="sr-value num-red">${fmtNum(v)}</span></div>`),
+    current ? `<div class="sr-level" style="border-color:var(--yellow)"><span class="sr-label" style="color:var(--yellow)">Current</span><span class="sr-value num-yellow">${fmtNum(current)}</span></div>` : '',
+    ...sup.map((v, i) => `<div class="sr-level"><span class="sr-label">S${i+1}</span><span class="sr-value num-green">${fmtNum(v)}</span></div>`),
+  ];
+  document.getElementById('sr-levels').innerHTML = rows.join('') || '<div style="color:var(--text-muted);font-size:12px">No data</div>';
+}
+
+// ============================================================
+// Signals
+// ============================================================
+let sigIndexState = 'NIFTY';
+
+function setSigIndex(idx) {
+  sigIndexState = idx;
+  document.getElementById('sig-nifty-btn').classList.toggle('active', idx === 'NIFTY');
+  document.getElementById('sig-sensex-btn').classList.toggle('active', idx === 'SENSEX');
+  loadSignals();
+}
+
+async function loadSignals() {
+  document.getElementById('signal-detail-card').innerHTML = '<div class="loading-overlay"><div class="spinner"></div></div>';
+  document.getElementById('strategies-container').innerHTML = '<div class="loading-overlay"><div class="spinner"></div></div>';
+  try {
+    const res = await fetch(`/api/analysis/${sigIndexState}`);
+    const d = await res.json();
+    renderDetailedSignal(d);
+    renderStrategies(d.strategies || []);
+  } catch(e) {
+    document.getElementById('signal-detail-card').innerHTML = `<div class="card" style="color:var(--red)">Error loading signals: ${e.message}</div>`;
+  }
+}
+
+function renderDetailedSignal(d) {
+  const s = d.signal || {};
+  const action = (s.action || 'WAIT').toLowerCase();
+  const conf = (s.confidence || 'LOW').toLowerCase();
+  const sb = s.signals_breakdown || {};
+  document.getElementById('signal-detail-card').innerHTML = `
+    <div class="signal-card ${action}">
+      <div class="signal-header">
+        <div>
+          <div class="signal-index" style="font-size:16px">${d.index} — ${s.instrument || ''}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:3px">Strategy: ${s.strategy || '—'}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="signal-action ${action}" style="font-size:15px;padding:6px 18px">${s.action || 'WAIT'}</span>
+          <span class="badge ${conf}" style="font-size:12px;padding:4px 14px">${s.confidence || 'LOW'}</span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0">
+        <div class="signal-field"><label>Spot</label><div class="val">${fmtNum(d.spot)}</div></div>
+        <div class="signal-field"><label>Entry</label><div class="val">${fmtNum(s.entry_price)}</div></div>
+        <div class="signal-field"><label>Target</label><div class="val target">${fmtNum(s.target)}</div></div>
+        <div class="signal-field"><label>Stop Loss</label><div class="val sl">${fmtNum(s.stop_loss)}</div></div>
+        <div class="signal-field"><label>Risk (pts)</label><div class="val num-red">${fmt(s.risk_points)}</div></div>
+        <div class="signal-field"><label>Reward (pts)</label><div class="val num-green">${fmt(s.reward_points)}</div></div>
+        <div class="signal-field"><label>R:R</label><div class="val">${s.rr_label || '—'}</div></div>
+        <div class="signal-field"><label>Expiry</label><div class="val" style="font-size:11px">${s.expiry || '—'}</div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:6px">Signal Breakdown</div>
+          <div style="font-size:12px;display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">
+            <span style="color:var(--text-muted)">Tech Score</span><span class="${colorClass(sb.technical_score)}" style="font-family:var(--font-mono)">${sb.technical_score >= 0 ? '+' : ''}${sb.technical_score}</span>
+            <span style="color:var(--text-muted)">Tech Bias</span><span style="color:${biasColor(sb.technical_bias)}">${sb.technical_bias || '—'}</span>
+            <span style="color:var(--text-muted)">PCR</span><span style="font-family:var(--font-mono)">${fmt(sb.pcr, 3)}</span>
+            <span style="color:var(--text-muted)">IV Rank</span><span style="font-family:var(--font-mono)">${fmt(sb.iv_rank, 1)}%</span>
+            <span style="color:var(--text-muted)">OI Bias</span><span style="color:${biasColor(sb.oi_bias)}">${sb.oi_bias || 'NEUTRAL'}</span>
+            <span style="color:var(--text-muted)">Max Pain</span><span style="font-family:var(--font-mono)">${fmtNum(sb.max_pain)}</span>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);margin-bottom:6px">Signal Reasons</div>
+          <ul class="reasons-list">
+            ${(s.reasons || []).slice(0, 8).map(r => `<li>${r}</li>`).join('')}
+          </ul>
+        </div>
+      </div>
+      ${s.action !== 'WAIT' ? `<button class="btn-place" onclick="openOrderModal('${d.index}', '${s.action}', ${d.spot})">Place Order</button>` : ''}
+    </div>`;
+}
+
+function renderStrategies(strategies) {
+  if (!strategies.length) {
+    document.getElementById('strategies-container').innerHTML = '<div class="card" style="color:var(--text-muted)">No strategies available</div>';
+    return;
+  }
+  const html = strategies.map(s => {
+    const dirClass = s.direction?.toLowerCase().replace('_volatile', '') || 'neutral';
+    const legsHtml = s.legs && s.legs.length ? `
+      <table class="legs-table">
+        <thead><tr><th>Action</th><th>Type</th><th>Strike</th></tr></thead>
+        <tbody>${s.legs.map(l => `<tr><td style="color:${l.action==='BUY'?'var(--green)':'var(--red)'};font-weight:700">${l.action}</td><td>${l.type}</td><td style="text-align:right">${l.strike}</td></tr>`).join('')}</tbody>
+      </table>` : '';
+    return `
+      <div class="strategy-card" style="margin-bottom:10px">
+        <div class="strategy-header">
+          <div>
+            <div class="strategy-name">${s.name}</div>
+            <div class="strategy-type">${s.type || ''}</div>
+          </div>
+          <span class="strategy-dir ${dirClass}">${(s.direction||'').replace(/_/g,' ')}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${s.ideal_condition || ''}</div>
+        ${legsHtml}
+        <div class="profit-loss-row">
+          <div class="pl-item"><label>Max Profit</label><span style="color:var(--green)">${s.max_profit}</span></div>
+          <div class="pl-item"><label>Max Loss</label><span style="color:var(--red)">${s.max_loss}</span></div>
+          <div class="pl-item"><label>R:R</label><span>${s.risk_reward}</span></div>
+          <div class="pl-item"><label>Confidence</label><span class="badge ${(s.confidence||'medium').toLowerCase()}">${s.confidence||'—'}</span></div>
+        </div>
+      </div>`;
+  }).join('');
+  document.getElementById('strategies-container').innerHTML = html;
+}
+
+// ============================================================
+// Positions
+// ============================================================
+async function loadPositions() {
+  try {
+    const res = await fetch('/api/positions');
+    const d = await res.json();
+    if (!d.authenticated) {
+      document.getElementById('pos-auth-badge').innerHTML = '<span style="color:var(--yellow);font-size:12px">Not logged in — showing empty</span>';
+      return;
+    }
+    document.getElementById('pos-auth-badge').innerHTML = '<span style="color:var(--green);font-size:12px">● Live data</span>';
+
+    const netPos = d.net || [];
+    const tbody = netPos.map(p => {
+      const pnl = p.pnl || 0;
+      return `<tr>
+        <td><b>${p.tradingsymbol}</b></td>
+        <td>${p.product}</td>
+        <td style="font-family:var(--font-mono)">${p.quantity}</td>
+        <td style="font-family:var(--font-mono)">${fmt(p.average_price)}</td>
+        <td style="font-family:var(--font-mono)">${fmt(p.last_price)}</td>
+        <td class="${pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${pnl >= 0 ? '+' : ''}${fmt(pnl)}</td>
+        <td class="${(p.day_m2m||0) >= 0 ? 'pnl-positive' : 'pnl-negative'}">${(p.day_m2m||0) >= 0 ? '+' : ''}${fmt(p.day_m2m)}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('positions-tbody').innerHTML = tbody || '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">No open positions</td></tr>';
+
+    const orders = d.orders || [];
+    const orderRows = orders.slice(0, 20).map(o => {
+      const statusColor = o.status === 'COMPLETE' ? 'var(--green)' : o.status === 'REJECTED' ? 'var(--red)' : 'var(--yellow)';
+      const time = o.order_timestamp ? new Date(o.order_timestamp).toLocaleTimeString('en-IN', {hour12:false}) : '—';
+      return `<tr>
+        <td>${time}</td>
+        <td><b>${o.tradingsymbol}</b></td>
+        <td style="color:${o.transaction_type === 'BUY' ? 'var(--green)' : 'var(--red)'};font-weight:700">${o.transaction_type}</td>
+        <td style="font-family:var(--font-mono)">${o.quantity}</td>
+        <td style="font-family:var(--font-mono)">${fmt(o.average_price)}</td>
+        <td style="color:${statusColor};font-size:11px;font-weight:600">${o.status}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('orders-tbody').innerHTML = orderRows || '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:20px">No orders today</td></tr>';
+  } catch(e) {
+    console.error('Positions error:', e);
+  }
+}
+
+// ============================================================
+// Order Modal
+// ============================================================
+function openOrderModal(index, action, price) {
+  const expiry = state.dashboardData?.[index.toLowerCase()]?.expiry?.replace(/-/g,'') || '';
+  document.getElementById('order-symbol').value = `${index}${expiry.slice(2, 8)}FUT`;
+  document.getElementById('order-txn').value = action;
+  document.getElementById('order-price').value = price;
+  document.getElementById('order-exchange').value = index === 'SENSEX' ? 'BFO' : 'NFO';
+  document.getElementById('order-modal').classList.add('open');
+  state.orderParams = { index, action, price };
+}
+
+function closeModal() {
+  document.getElementById('order-modal').classList.remove('open');
+}
+
+function togglePrice() {
+  const type = document.getElementById('order-type').value;
+  document.getElementById('price-field').style.display = (type === 'LIMIT' || type === 'SL') ? 'block' : 'none';
+}
+
+async function confirmOrder() {
+  const symbol = document.getElementById('order-symbol').value;
+  const exchange = document.getElementById('order-exchange').value;
+  const txn = document.getElementById('order-txn').value;
+  const qty = parseInt(document.getElementById('order-qty').value) || 1;
+  const orderType = document.getElementById('order-type').value;
+  const price = parseFloat(document.getElementById('order-price').value) || 0;
+  const product = document.getElementById('order-product').value;
+
+  const params = { tradingsymbol: symbol, exchange, transaction_type: txn, quantity: qty, order_type: orderType, product };
+  if (orderType === 'LIMIT' || orderType === 'SL') params.price = price;
+
+  try {
+    const res = await fetch('/api/order', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(params),
+    });
+    const d = await res.json();
+    if (res.ok) {
+      showToast(`Order placed! ID: ${d.order_id}`, 'success');
+      closeModal();
+    } else {
+      showToast(`Order failed: ${d.detail}`, 'error');
+    }
+  } catch(e) {
+    showToast('Network error placing order', 'error');
+  }
+}
+
+// ============================================================
+// OI History
+// ============================================================
+let oihData = null;
+
+async function loadOIHistory() {
+  const index  = document.getElementById('oih-index').value;
+  const expiry = document.getElementById('oih-expiry').value;
+  const days   = document.getElementById('oih-days').value;
+  if (!expiry) return;
+
+  document.getElementById('oih-status').textContent = 'Loading…';
+  document.getElementById('oih-daily-body').innerHTML =
+    '<tr><td colspan="13" style="text-align:center;color:#8b949e;padding:30px">Loading…</td></tr>';
+
+  try {
+    const r = await fetch(`/api/option-chain-history/${index}?expiry=${expiry}&days=${days}`);
+    if (!r.ok) throw new Error(await r.text());
+    oihData = await r.json();
+    renderOIHistory(oihData);
+    document.getElementById('oih-status').textContent =
+      `${oihData.days} trading days loaded`;
+  } catch(e) {
+    document.getElementById('oih-status').textContent = 'Error: ' + e.message;
+  }
+}
+
+function renderOIHistory(data) {
+  // Trend summary cards
+  const ts = data.trend_summary || {};
+  const fmt = v => v != null ? v : '—';
+  const fmtN = (v, dec=2) => v != null ? Number(v).toFixed(dec) : '—';
+
+  document.getElementById('oih-pcr-trend').textContent =
+    `${fmtN(ts.pcr_start,2)} → ${fmtN(ts.pcr_end,2)}`;
+  document.getElementById('oih-pcr-trend').style.color =
+    ts.pcr_end > ts.pcr_start ? '#00d964' : '#ff4757';
+
+  document.getElementById('oih-mp-trend').textContent =
+    `${fmt(ts.max_pain_start)} → ${fmt(ts.max_pain_end)}`;
+
+  document.getElementById('oih-iv-trend').textContent =
+    `${fmtN(ts.iv_start,1)}% → ${fmtN(ts.iv_end,1)}%`;
+  document.getElementById('oih-iv-trend').style.color =
+    ts.iv_end > ts.iv_start ? '#ff4757' : '#00d964';
+
+  const sChg = ts.spot_change_pct;
+  document.getElementById('oih-spot-trend').textContent =
+    sChg != null ? `${sChg > 0 ? '+' : ''}${sChg.toFixed(2)}%` : '—';
+  document.getElementById('oih-spot-trend').style.color =
+    sChg > 0 ? '#00d964' : '#ff4757';
+
+  document.getElementById('oih-pcr-avg').textContent = fmtN(ts.pcr_avg, 3);
+
+  // Daily table
+  const tbody = document.getElementById('oih-daily-body');
+  if (!data.history || !data.history.length) {
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;color:#8b949e;padding:20px">No data</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.history.map((row, i) => {
+    const mpDiff = row.max_pain - row.spot;
+    const mpColor = mpDiff > 0 ? '#00d964' : '#ff4757';
+    const pcrColor = row.pcr_oi < 0.7 ? '#ff4757' : (row.pcr_oi > 1.2 ? '#00d964' : '#ffd700');
+    const sentColor = row.pcr_sentiment === 'BULLISH' ? '#00d964' :
+                      row.pcr_sentiment === 'BEARISH' ? '#ff4757' : '#ffd700';
+    const topCE = (row.top_ce_strikes || []).map(s => s.strike).slice(0,3).join(', ') || '—';
+    const topPE = (row.top_pe_strikes || []).map(s => s.strike).slice(0,3).join(', ') || '—';
+
+    return `<tr style="cursor:pointer" onclick="showDayChain(${i})" title="Click to see strike-wise OI">
+      <td style="text-align:left;font-weight:500;color:#58a6ff">${row.display_date}</td>
+      <td>${row.spot?.toFixed(2)}</td>
+      <td style="color:#ffd700">${row.atm}</td>
+      <td>${row.dte}</td>
+      <td>${row.atm_iv?.toFixed(1)}%</td>
+      <td style="color:${pcrColor};font-weight:600">${row.pcr_oi?.toFixed(3)}</td>
+      <td style="color:${sentColor}">${row.pcr_sentiment}</td>
+      <td style="color:#ffd700">${row.max_pain}</td>
+      <td style="color:${mpColor}">${mpDiff > 0 ? '+' : ''}${mpDiff.toFixed(0)}</td>
+      <td style="color:#ff6b6b">${(row.total_ce_oi/1e7).toFixed(2)}Cr</td>
+      <td style="color:#00d964">${(row.total_pe_oi/1e7).toFixed(2)}Cr</td>
+      <td style="color:#ff6b6b;font-size:11px">${topCE}</td>
+      <td style="color:#00d964;font-size:11px">${topPE}</td>
+    </tr>`;
+  }).join('');
+}
+
+function showDayChain(index) {
+  if (!oihData || !oihData.history[index]) return;
+  const row   = oihData.history[index];
+  const chain = row.chain || [];
+  const atm   = row.atm;
+
+  document.getElementById('oih-chain-date').textContent =
+    `${row.display_date} — Spot: ${row.spot} | ATM: ${atm} | DTE: ${row.dte}`;
+
+  const tbody = document.getElementById('oih-chain-body');
+  if (!chain.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b949e;padding:20px">No chain data</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = chain.map(r => {
+    const isATM = r.strike === atm;
+    const bg    = isATM ? 'background:#1c2128' : '';
+    const ce    = r.CE || {};
+    const pe    = r.PE || {};
+    const ceChgColor = (ce.oi_change || 0) > 0 ? '#00d964' : '#ff4757';
+    const peChgColor = (pe.oi_change || 0) > 0 ? '#00d964' : '#ff4757';
+
+    return `<tr style="${bg}">
+      <td style="color:#ff6b6b">${(ce.oi||0).toLocaleString()}</td>
+      <td style="color:${ceChgColor};font-size:11px">${(ce.oi_change||0) > 0 ? '+' : ''}${(ce.oi_change||0).toLocaleString()}</td>
+      <td>${ce.iv?.toFixed(1)||'—'}%</td>
+      <td style="color:#e6edf3">${ce.ltp?.toFixed(2)||'—'}</td>
+      <td style="background:#161b22;color:#ffd700;font-weight:700;font-size:13px">${r.strike}</td>
+      <td style="color:#e6edf3">${pe.ltp?.toFixed(2)||'—'}</td>
+      <td>${pe.iv?.toFixed(1)||'—'}%</td>
+      <td style="color:${peChgColor};font-size:11px">${(pe.oi_change||0) > 0 ? '+' : ''}${(pe.oi_change||0).toLocaleString()}</td>
+      <td style="color:#00d964">${(pe.oi||0).toLocaleString()}</td>
+    </tr>`;
+  }).join('');
+
+  // Highlight selected row in daily table
+  document.querySelectorAll('#oih-daily-body tr').forEach((tr, i) => {
+    tr.style.background = i === index ? 'rgba(88,166,255,0.08)' : '';
+  });
+}
+
+// Populate OI History expiry dropdown when tab is opened
+async function initOIHistoryTab() {
+  const index = document.getElementById('oih-index').value;
+  try {
+    const r = await fetch(`/api/option-chain/${index}`);
+    const d = await r.json();
+    const sel = document.getElementById('oih-expiry');
+    sel.innerHTML = (d.expiry_list || []).map(e =>
+      `<option value="${e}">${e}</option>`).join('');
+    if (!sel.value && d.expiry_list?.length) {
+      sel.value = d.expiry_list[0];
+    }
+  } catch(e) {}
+  loadOIHistory();
+}
+
+// ============================================================
+// Login
+// ============================================================
+async function handleLogin() {
+  if (state.authenticated) return;
+  try {
+    const res = await fetch('/api/auth/login');
+    const d = await res.json();
+    // Redirect the main window — Zerodha sends request_token back here
+    window.location.href = d.login_url;
+  } catch(e) {
+    showToast('Failed to get login URL', 'error');
+  }
+}
+
+function updateLoginBtn(auth) {
+  const btn = document.getElementById('login-btn');
+  if (auth) {
+    btn.textContent = 'Connected';
+    btn.classList.add('authenticated');
+  } else {
+    btn.textContent = 'Login';
+    btn.classList.remove('authenticated');
+  }
+}
+
+// ============================================================
+// Toast
+// ============================================================
+let toastTimeout;
+function showToast(msg, type='success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show ${type}`;
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => el.classList.remove('show'), 4000);
+}
+
+// ============================================================
+// Init & Polling
+// ============================================================
+(async function init() {
+  // Fetch runtime config (host, env) from server
+  try {
+    const cfg = await fetch('/api/config').then(r => r.json());
+    window._appConfig = cfg;
+    if (cfg.is_prod) {
+      console.log('[F&O Analyzer] Production mode:', cfg.app_host);
+    }
+  } catch(e) { window._appConfig = {}; }
+
+  // Check auth
+  try {
+    const r = await fetch('/api/auth/status');
+    const d = await r.json();
+    state.authenticated = d.authenticated;
+    updateLoginBtn(d.authenticated);
+  } catch(e) {}
+
+  // Initial data loads
+  loadDashboard();
+  populateExpirySelect();
+
+  // Connect WebSocket
+  connectWS();
+
+  // Poll dashboard every 5s
+  setInterval(loadDashboard, 5000);
+
+  // Handle OAuth callback token in URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const requestToken = urlParams.get('request_token');
+  const authStatus = urlParams.get('status');
+
+  if (requestToken) {
+    showToast('Logging in with Zerodha...', 'success');
+    try {
+      const r = await fetch(`/api/auth/callback?request_token=${requestToken}`);
+      const d = await r.json();
+      if (d.status === 'success') {
+        showToast(`Welcome, ${d.user_id || 'trader'}! Zerodha connected.`, 'success');
+        state.authenticated = true;
+        updateLoginBtn(true);
+        window.history.replaceState({}, document.title, '/');
+        loadDashboard();
+      } else {
+        showToast(`Login failed: ${d.detail || 'Unknown error'}`, 'error');
+      }
+    } catch(e) {
+      showToast(`Login error: ${e.message}`, 'error');
+    }
+  } else if (authStatus === 'failed') {
+    showToast('Zerodha login was cancelled or failed.', 'error');
+    window.history.replaceState({}, document.title, '/');
+  }
+})();
+
+// Close modal on overlay click
+document.getElementById('order-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+</script>
+</body>
+</html>

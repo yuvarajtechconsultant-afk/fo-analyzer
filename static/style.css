@@ -1,0 +1,57 @@
+/* Additional custom styles — main styles live in index.html */
+
+/* Print styles */
+@media print {
+  .sidebar, .navbar, .modal-overlay { display: none !important; }
+  .main { overflow: visible; }
+  .card { break-inside: avoid; }
+}
+
+/* High-contrast focus rings for accessibility */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: 2px;
+}
+
+/* Smooth transitions on tab panels */
+.tab-panel {
+  animation: fadeIn 0.18s ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Custom checkbox style */
+input[type="checkbox"] {
+  accent-color: #58a6ff;
+}
+
+/* Tooltip utility */
+[data-tooltip] {
+  position: relative;
+  cursor: help;
+}
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1c2128;
+  border: 1px solid #30363d;
+  border-radius: 5px;
+  padding: 5px 9px;
+  font-size: 11px;
+  color: #c9d1d9;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 500;
+}
+[data-tooltip]:hover::after {
+  opacity: 1;
+}
