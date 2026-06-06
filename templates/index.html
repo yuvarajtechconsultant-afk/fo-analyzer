@@ -487,6 +487,80 @@
       .sidebar { display: none; }
       .grid-4, .grid-3 { grid-template-columns: 1fr 1fr; }
     }
+
+    /* ===== Algo Tab ===== */
+    .algo-index-block {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+    .algo-header {
+      display: flex; align-items: center; gap: 14px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .algo-index-name { font-size: 18px; font-weight: 800; color: var(--text-bright); }
+    .algo-spot { font-family: var(--font-mono); font-size: 20px; font-weight: 700; margin-left: auto; }
+    .algo-signal-badge {
+      font-size: 13px; font-weight: 800;
+      padding: 6px 18px; border-radius: 6px;
+      letter-spacing: 1px; text-transform: uppercase;
+    }
+    .algo-signal-badge.green  { background: rgba(0,217,100,0.18); color: var(--green); border: 1px solid rgba(0,217,100,0.4); }
+    .algo-signal-badge.red    { background: rgba(255,71,87,0.18);  color: var(--red);   border: 1px solid rgba(255,71,87,0.4); }
+    .algo-signal-badge.blue   { background: rgba(88,166,255,0.18); color: var(--blue);  border: 1px solid rgba(88,166,255,0.4); }
+    .algo-signal-badge.orange { background: rgba(255,165,0,0.18);  color: #ffa500;      border: 1px solid rgba(255,165,0,0.4); }
+    .algo-signal-badge.yellow { background: rgba(255,215,0,0.18);  color: var(--yellow);border: 1px solid rgba(255,215,0,0.4); }
+
+    .algo-body { padding: 16px 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .algo-option-card {
+      border-radius: 8px; padding: 14px;
+      border: 1px solid var(--border);
+    }
+    .algo-option-card.ce { background: rgba(0,217,100,0.04); border-color: rgba(0,217,100,0.25); }
+    .algo-option-card.pe { background: rgba(255,71,87,0.04);  border-color: rgba(255,71,87,0.25); }
+    .algo-opt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .algo-opt-title { font-size: 14px; font-weight: 800; }
+    .algo-opt-title.ce { color: var(--green); }
+    .algo-opt-title.pe { color: var(--red); }
+    .algo-opt-action {
+      font-size: 11px; font-weight: 700;
+      padding: 3px 10px; border-radius: 10px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .algo-opt-action.buy  { background: rgba(0,217,100,0.2); color: var(--green); }
+    .algo-opt-action.sell { background: rgba(255,71,87,0.2);  color: var(--red); }
+    .algo-price-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .algo-price-item label { display: block; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+    .algo-price-item .val { font-family: var(--font-mono); font-size: 16px; font-weight: 700; }
+    .algo-price-item .val.entry  { color: var(--text-bright); }
+    .algo-price-item .val.target { color: var(--green); }
+    .algo-price-item .val.sl     { color: var(--red); }
+    .algo-strike-label { font-size: 11px; color: var(--text-muted); margin-top: 8px; }
+
+    .algo-score-bar { margin-top: 14px; padding: 12px 20px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+    .algo-score-track { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; position: relative; }
+    .algo-score-fill-buy  { position: absolute; left: 0; top: 0; height: 100%; background: var(--green); border-radius: 4px 0 0 4px; transition: width 0.5s; }
+    .algo-score-fill-sell { position: absolute; right: 0; top: 0; height: 100%; background: var(--red); border-radius: 0 4px 4px 0; transition: width 0.5s; }
+    .algo-conf { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+
+    .algo-reasons { margin-top: 0; padding: 12px 20px 16px; border-top: 1px solid var(--border); }
+    .algo-reasons-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 8px; }
+    .algo-reasons ul { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+    .algo-reasons ul li {
+      font-size: 11px; color: var(--text);
+      background: var(--bg-card2); border: 1px solid var(--border);
+      padding: 3px 10px; border-radius: 10px;
+    }
+
+    .algo-indicators-row { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 20px 14px; }
+    .algo-ind-chip { background: var(--bg-card2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 11px; }
+    .algo-ind-chip span { font-family: var(--font-mono); font-weight: 700; }
+    .algo-ind-chip span.up   { color: var(--green); }
+    .algo-ind-chip span.down { color: var(--red); }
+    .algo-ind-chip span.neut { color: var(--yellow); }
   </style>
 </head>
 <body>
@@ -538,6 +612,9 @@
       </div>
       <div class="nav-item" onclick="switchTab('positions')" data-tab="positions">
         <span class="nav-icon">💼</span> Positions
+      </div>
+      <div class="nav-item" onclick="switchTab('algo')" data-tab="algo">
+        <span class="nav-icon">🤖</span> Algo
       </div>
     </nav>
   </aside>
@@ -952,6 +1029,24 @@
       </div>
     </div>
 
+    <!-- ===== ALGO TAB ===== -->
+    <div class="tab-panel" id="tab-algo">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div>
+          <h2 style="font-size:16px;font-weight:700;color:var(--text-bright);margin-bottom:2px;">🤖 Algo Signal Engine</h2>
+          <p style="font-size:12px;color:var(--text-muted);">Multi-factor confluence — 7 indicators scoring NIFTY &amp; SENSEX in real-time</p>
+        </div>
+        <button class="interval-btn active" onclick="loadAlgo()" style="display:flex;align-items:center;gap:6px;">
+          <span id="algo-spinner" style="display:none" class="spinner" style="width:14px;height:14px;border-width:2px;"></span>
+          ↻ Refresh
+        </button>
+      </div>
+
+      <div id="algo-content">
+        <div class="loading-overlay"><div class="spinner"></div>&nbsp;Computing signals…</div>
+      </div>
+    </div>
+
   </main>
 </div>
 
@@ -1043,11 +1138,12 @@ function switchTab(tab) {
   document.getElementById('tab-' + tab).classList.add('active');
   document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
 
-  if (tab === 'technical')   loadChart();
+  if (tab === 'technical')    loadChart();
   if (tab === 'option-chain') loadOptionChain();
   if (tab === 'signals')      loadSignals();
   if (tab === 'positions')    loadPositions();
   if (tab === 'oi-history')   initOIHistoryTab();
+  if (tab === 'algo')         loadAlgo();
 }
 
 // ============================================================
@@ -1814,6 +1910,130 @@ async function loadPositions() {
   } catch(e) {
     console.error('Positions error:', e);
   }
+}
+
+// ============================================================
+// Algo Signals
+// ============================================================
+async function loadAlgo() {
+  const el = document.getElementById('algo-content');
+  const sp = document.getElementById('algo-spinner');
+  el.innerHTML = '<div class="loading-overlay"><div class="spinner"></div>&nbsp;Computing signals…</div>';
+  if (sp) sp.style.display = 'inline-block';
+  try {
+    const data = await fetch('/api/algo-signals').then(r => r.json());
+    el.innerHTML = ['NIFTY','SENSEX'].map(idx => renderAlgoBlock(data[idx], idx)).join('');
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--red);padding:20px">Error: ${e.message}</div>`;
+  }
+  if (sp) sp.style.display = 'none';
+}
+
+function renderAlgoBlock(d, idx) {
+  if (!d || d.signal === 'NO DATA' || d.signal === 'ERROR') {
+    return `<div class="algo-index-block"><div class="algo-header"><span class="algo-index-name">${idx}</span><span style="color:var(--text-muted)">No data available</span></div></div>`;
+  }
+
+  const colorClass = d.color || 'yellow';
+  const isBuy  = d.signal.includes('BUY');
+  const isSell = d.signal.includes('SELL');
+
+  const ce = d.ce;
+  const pe = d.pe;
+  const ceAction = ce.action.includes('BUY') ? 'buy' : 'sell';
+  const peAction = pe.action.includes('BUY') ? 'buy' : 'sell';
+
+  const buyPct  = d.buy_pct  || 0;
+  const sellPct = d.sell_pct || 0;
+
+  const rsiColor = d.rsi > 70 ? 'down' : d.rsi < 30 ? 'up' : d.rsi > 55 ? 'up' : d.rsi < 45 ? 'down' : 'neut';
+  const spot = d.spot ? d.spot.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) : '—';
+
+  const reasons = (d.reasons || []).map(r => `<li>✓ ${r}</li>`).join('');
+
+  return `
+  <div class="algo-index-block">
+    <div class="algo-header">
+      <span class="algo-index-name">${idx}</span>
+      <span class="algo-signal-badge ${colorClass}">${d.signal}</span>
+      <span class="algo-spot" style="color:${isBuy?'var(--green)':isSell?'var(--red)':'var(--text-bright)'}">₹${spot}</span>
+    </div>
+
+    <!-- Indicator chips -->
+    <div class="algo-indicators-row">
+      <div class="algo-ind-chip">RSI <span class="${rsiColor}">${d.rsi}</span></div>
+      <div class="algo-ind-chip">ATR <span class="neut">${d.atr}</span></div>
+      <div class="algo-ind-chip">Score Bull <span class="up">${d.score_buy}</span></div>
+      <div class="algo-ind-chip">Score Bear <span class="down">${d.score_sell}</span></div>
+      <div class="algo-ind-chip">Lot Size <span class="neut">${d.lot_size}</span></div>
+      <div class="algo-ind-chip">Confidence <span class="${colorClass==='green'?'up':colorClass==='red'?'down':'neut'}">${d.confidence}%</span></div>
+    </div>
+
+    <!-- CE / PE option cards -->
+    <div class="algo-body">
+      <!-- CE Card -->
+      <div class="algo-option-card ce">
+        <div class="algo-opt-header">
+          <span class="algo-opt-title ce">CALL (CE)</span>
+          <span class="algo-opt-action ${ceAction}">${ce.action}</span>
+        </div>
+        <div class="algo-price-grid">
+          <div class="algo-price-item">
+            <label>Entry Price</label>
+            <div class="val entry">₹${ce.entry}</div>
+          </div>
+          <div class="algo-price-item">
+            <label>Target</label>
+            <div class="val target">₹${ce.target}</div>
+          </div>
+          <div class="algo-price-item">
+            <label>Stop Loss</label>
+            <div class="val sl">₹${ce.sl}</div>
+          </div>
+        </div>
+        <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${ce.strike}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">${ce.reward_risk}x</strong></div>
+      </div>
+
+      <!-- PE Card -->
+      <div class="algo-option-card pe">
+        <div class="algo-opt-header">
+          <span class="algo-opt-title pe">PUT (PE)</span>
+          <span class="algo-opt-action ${peAction}">${pe.action}</span>
+        </div>
+        <div class="algo-price-grid">
+          <div class="algo-price-item">
+            <label>Entry Price</label>
+            <div class="val entry">₹${pe.entry}</div>
+          </div>
+          <div class="algo-price-item">
+            <label>Target</label>
+            <div class="val target">₹${pe.target}</div>
+          </div>
+          <div class="algo-price-item">
+            <label>Stop Loss</label>
+            <div class="val sl">₹${pe.sl}</div>
+          </div>
+        </div>
+        <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${pe.strike}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">${pe.reward_risk}x</strong></div>
+      </div>
+    </div>
+
+    <!-- Score bar -->
+    <div class="algo-score-bar">
+      <span class="algo-conf" style="color:var(--green)">Bull ${buyPct}%</span>
+      <div class="algo-score-track">
+        <div class="algo-score-fill-buy"  style="width:${buyPct}%"></div>
+        <div class="algo-score-fill-sell" style="width:${sellPct}%"></div>
+      </div>
+      <span class="algo-conf" style="color:var(--red)">Bear ${sellPct}%</span>
+    </div>
+
+    <!-- Reasons -->
+    <div class="algo-reasons">
+      <div class="algo-reasons-title">Signal factors</div>
+      <ul>${reasons}</ul>
+    </div>
+  </div>`;
 }
 
 // ============================================================

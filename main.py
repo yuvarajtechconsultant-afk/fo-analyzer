@@ -671,6 +671,235 @@ async def place_order(request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/algo-signals")
+async def algo_signals():
+    """
+    Algo tab: compute STRONG BUY / STRONG SELL signals for NIFTY & SENSEX.
+    Returns the recommended CE/PE option strike, buy/sell price, target, SL.
+    """
+    from analysis.technical import (
+        calculate_ema, calculate_rsi, calculate_macd,
+        calculate_supertrend, calculate_atr, calculate_bollinger_bands,
+    )
+
+    results = {}
+
+    for index in ["NIFTY", "SENSEX"]:
+        try:
+            df = _get_historical_df(index, "15minute", 5)
+            if df.empty or len(df) < 50:
+                results[index] = {"signal": "NO DATA"}
+                continue
+
+            close = df["close"]
+            high  = df["high"]
+            low   = df["low"]
+            spot  = float(close.iloc[-1])
+
+            # ── Indicators ──────────────────────────────────────
+            ema9   = calculate_ema(close, 9)
+            ema21  = calculate_ema(close, 21)
+            ema50  = calculate_ema(close, 50)
+            ema200 = calculate_ema(close, 200)
+            rsi    = calculate_rsi(close, 14)
+            macd_d = calculate_macd(close)
+            hist   = macd_d["histogram"]
+            macd_l = macd_d["macd"]
+            sig_l  = macd_d["signal"]
+            atr    = calculate_atr(high, low, close, 14)
+            bb     = calculate_bollinger_bands(close, 20, 2)
+
+            try:
+                st_data = calculate_supertrend(high, low, close, 10, 3)
+                st_dir  = st_data.get("direction", pd.Series([1]*len(df), index=df.index))
+            except Exception:
+                st_dir = pd.Series([1]*len(df), index=df.index)
+
+            i = len(df) - 1
+            atr_val   = float(atr.iloc[i]) if not np.isnan(atr.iloc[i]) else spot * 0.005
+            rsi_val   = float(rsi.iloc[i])
+            e9        = float(ema9.iloc[i])
+            e21       = float(ema21.iloc[i])
+            e50       = float(ema50.iloc[i])
+            e200      = float(ema200.iloc[i]) if len(ema200) > i else spot
+            hist_now  = float(hist.iloc[i])
+            hist_prev = float(hist.iloc[i - 1])
+            macd_now  = float(macd_l.iloc[i])
+            sig_now   = float(sig_l.iloc[i])
+            st_now    = int(st_dir.iloc[i])
+            bb_upper  = float(bb["upper"].iloc[i])
+            bb_lower  = float(bb["lower"].iloc[i])
+            bb_mid    = float(bb["middle"].iloc[i])
+
+            # ── Score system ─────────────────────────────────────
+            score_buy = score_sell = 0
+            reasons_buy = []
+            reasons_sell = []
+
+            # 1. EMA alignment (trend)
+            if e9 > e21 > e50:
+                score_buy += 2; reasons_buy.append("EMA9 > EMA21 > EMA50 (bullish alignment)")
+            if e9 < e21 < e50:
+                score_sell += 2; reasons_sell.append("EMA9 < EMA21 < EMA50 (bearish alignment)")
+
+            # 2. Price vs EMA200
+            if spot > e200:
+                score_buy += 1; reasons_buy.append("Price above EMA200 (long-term uptrend)")
+            else:
+                score_sell += 1; reasons_sell.append("Price below EMA200 (long-term downtrend)")
+
+            # 3. MACD above signal
+            if macd_now > sig_now and hist_now > 0:
+                score_buy += 2; reasons_buy.append("MACD above signal & positive histogram")
+            if macd_now < sig_now and hist_now < 0:
+                score_sell += 2; reasons_sell.append("MACD below signal & negative histogram")
+
+            # 4. MACD histogram momentum
+            if hist_prev < 0 and hist_now > 0:
+                score_buy += 2; reasons_buy.append("MACD histogram flipped positive")
+            if hist_prev > 0 and hist_now < 0:
+                score_sell += 2; reasons_sell.append("MACD histogram flipped negative")
+
+            # 5. RSI
+            if 50 < rsi_val < 70:
+                score_buy += 2; reasons_buy.append(f"RSI {rsi_val:.1f} in bullish zone (50-70)")
+            if 30 < rsi_val < 50:
+                score_sell += 2; reasons_sell.append(f"RSI {rsi_val:.1f} in bearish zone (30-50)")
+            if rsi_val >= 70:
+                score_sell += 1; reasons_sell.append(f"RSI {rsi_val:.1f} overbought — potential reversal")
+            if rsi_val <= 30:
+                score_buy += 1; reasons_buy.append(f"RSI {rsi_val:.1f} oversold — potential bounce")
+
+            # 6. Supertrend
+            if st_now == 1:
+                score_buy += 2; reasons_buy.append("Supertrend bullish (price above band)")
+            else:
+                score_sell += 2; reasons_sell.append("Supertrend bearish (price below band)")
+
+            # 7. Bollinger Band position
+            if spot > bb_mid and spot < bb_upper:
+                score_buy += 1; reasons_buy.append("Price above BB midline, room to upper band")
+            if spot < bb_mid and spot > bb_lower:
+                score_sell += 1; reasons_sell.append("Price below BB midline, room to lower band")
+            if spot >= bb_upper:
+                score_sell += 1; reasons_sell.append("Price at BB upper band — overbought stretch")
+            if spot <= bb_lower:
+                score_buy += 1; reasons_buy.append("Price at BB lower band — oversold bounce likely")
+
+            # ── Determine signal ──────────────────────────────────
+            total = score_buy + score_sell
+            confidence = round((max(score_buy, score_sell) / max(total, 1)) * 100)
+            buy_pct  = round(score_buy  / max(total, 1) * 100)
+            sell_pct = round(score_sell / max(total, 1) * 100)
+
+            lot_size = 75 if index == "NIFTY" else 20
+            strike_gap = 50 if index == "NIFTY" else 100
+
+            if score_buy >= 8 and score_buy > score_sell + 2:
+                direction = "STRONG BUY"
+                color = "green"
+                reasons = reasons_buy
+                # CE recommendation (buy call)
+                ce_strike = round(spot / strike_gap) * strike_gap
+                ce_premium = round(spot * 0.008 + atr_val * 0.5, 1)
+                ce_target  = round(ce_premium * 1.6, 1)
+                ce_sl      = round(ce_premium * 0.55, 1)
+                pe_note    = "SELL PE (short put for premium)"
+                pe_strike  = ce_strike - strike_gap * 2
+                pe_premium = round(spot * 0.005 + atr_val * 0.3, 1)
+                pe_target  = round(pe_premium * 0.3, 1)   # target decay to 30%
+                pe_sl      = round(pe_premium * 1.5, 1)
+
+            elif score_sell >= 8 and score_sell > score_buy + 2:
+                direction = "STRONG SELL"
+                color = "red"
+                reasons = reasons_sell
+                # PE recommendation (buy put)
+                pe_strike  = round(spot / strike_gap) * strike_gap
+                pe_premium = round(spot * 0.008 + atr_val * 0.5, 1)
+                pe_target  = round(pe_premium * 1.6, 1)
+                pe_sl      = round(pe_premium * 0.55, 1)
+                ce_note    = "SELL CE (short call for premium)"
+                ce_strike  = pe_strike + strike_gap * 2
+                ce_premium = round(spot * 0.005 + atr_val * 0.3, 1)
+                ce_target  = round(ce_premium * 0.3, 1)
+                ce_sl      = round(ce_premium * 1.5, 1)
+
+            elif score_buy > score_sell:
+                direction = "MILD BUY"
+                color = "blue"
+                reasons = reasons_buy
+                ce_strike  = round(spot / strike_gap) * strike_gap
+                ce_premium = round(spot * 0.007 + atr_val * 0.4, 1)
+                ce_target  = round(ce_premium * 1.4, 1)
+                ce_sl      = round(ce_premium * 0.6, 1)
+                pe_strike  = ce_strike - strike_gap
+                pe_premium = round(spot * 0.004, 1)
+                pe_target  = round(pe_premium * 0.35, 1)
+                pe_sl      = round(pe_premium * 1.4, 1)
+
+            elif score_sell > score_buy:
+                direction = "MILD SELL"
+                color = "orange"
+                reasons = reasons_sell
+                pe_strike  = round(spot / strike_gap) * strike_gap
+                pe_premium = round(spot * 0.007 + atr_val * 0.4, 1)
+                pe_target  = round(pe_premium * 1.4, 1)
+                pe_sl      = round(pe_premium * 0.6, 1)
+                ce_strike  = pe_strike + strike_gap
+                ce_premium = round(spot * 0.004, 1)
+                ce_target  = round(ce_premium * 0.35, 1)
+                ce_sl      = round(ce_premium * 1.4, 1)
+
+            else:
+                direction = "NEUTRAL"
+                color = "yellow"
+                reasons = ["Indicators are mixed — wait for clearer setup"]
+                ce_strike  = round(spot / strike_gap) * strike_gap
+                pe_strike  = ce_strike
+                ce_premium = pe_premium = round(spot * 0.006, 1)
+                ce_target  = pe_target = round(ce_premium * 1.3, 1)
+                ce_sl      = pe_sl = round(ce_premium * 0.65, 1)
+
+            results[index] = sanitize({
+                "index": index,
+                "spot": spot,
+                "signal": direction,
+                "color": color,
+                "score_buy": score_buy,
+                "score_sell": score_sell,
+                "confidence": confidence,
+                "buy_pct": buy_pct,
+                "sell_pct": sell_pct,
+                "rsi": round(rsi_val, 1),
+                "atr": round(atr_val, 1),
+                "lot_size": lot_size,
+                "reasons": reasons[:6],
+                "ce": {
+                    "strike": ce_strike,
+                    "action": "BUY CE" if direction in ("STRONG BUY","MILD BUY") else "SELL CE",
+                    "entry": ce_premium,
+                    "target": ce_target,
+                    "sl": ce_sl,
+                    "reward_risk": round((ce_target - ce_premium) / max(ce_premium - ce_sl, 0.1), 2),
+                },
+                "pe": {
+                    "strike": pe_strike,
+                    "action": "BUY PE" if direction in ("STRONG SELL","MILD SELL") else "SELL PE",
+                    "entry": pe_premium,
+                    "target": pe_target,
+                    "sl": pe_sl,
+                    "reward_risk": round(abs(pe_target - pe_premium) / max(abs(pe_premium - pe_sl), 0.1), 2),
+                },
+                "timestamp": datetime.now().isoformat(),
+            })
+
+        except Exception as ex:
+            results[index] = {"signal": "ERROR", "error": str(ex)}
+
+    return JSONResponse(results)
+
+
 @app.get("/api/dashboard")
 async def dashboard():
     """Combined dashboard data — NIFTY + SENSEX summary."""
