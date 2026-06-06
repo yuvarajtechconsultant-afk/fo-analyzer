@@ -807,7 +807,7 @@ async def algo_signals():
             buy_pct  = round(score_buy  / max(total, 1) * 100)
             sell_pct = round(score_sell / max(total, 1) * 100)
 
-            lot_size = 75 if index == "NIFTY" else 20
+            lot_size = LOT_SIZES.get(index.upper(), 25)
             strike_gap = 50 if index == "NIFTY" else 100
             exchange = "NFO" if index == "NIFTY" else "BFO"
             expiry_dt = get_nearest_expiry(index)
