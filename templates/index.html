@@ -561,6 +561,37 @@
     .algo-ind-chip span.up   { color: var(--green); }
     .algo-ind-chip span.down { color: var(--red); }
     .algo-ind-chip span.neut { color: var(--yellow); }
+
+    .algo-order-btn {
+      flex: 1;
+      padding: 9px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+      letter-spacing: 0.4px;
+    }
+    .algo-order-btn:hover  { opacity: 0.85; transform: translateY(-1px); }
+    .algo-order-btn:active { transform: translateY(0); }
+    .algo-order-btn.buy  { background: var(--green); color: #000; }
+    .algo-order-btn.sell { background: var(--red);   color: #fff; }
+
+    /* Algo confirm modal */
+    #algo-confirm-modal .modal { width: 460px; }
+    .algo-confirm-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .algo-confirm-row:last-child { border: none; }
+    .algo-confirm-row .lbl { color: var(--text-muted); }
+    .algo-confirm-row .val { font-family: var(--font-mono); font-weight: 600; color: var(--text-bright); }
+    .algo-confirm-row .val.g { color: var(--green); }
+    .algo-confirm-row .val.r { color: var(--red); }
+    .algo-qty-input {
+      width: 100%; background: var(--bg-card2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 7px 10px; color: var(--text); font-size: 13px;
+      font-family: var(--font-mono); margin-top: 4px;
+    }
+    .algo-qty-input:focus { border-color: var(--blue); outline: none; }
   </style>
 </head>
 <body>
@@ -1048,6 +1079,49 @@
     </div>
 
   </main>
+</div>
+
+<!-- ===== ALGO ORDER CONFIRM MODAL ===== -->
+<div class="modal-overlay" id="algo-confirm-modal">
+  <div class="modal" style="width:460px">
+    <div class="modal-title" id="algo-modal-title">Confirm Order</div>
+    <div id="algo-modal-body"></div>
+    <div style="margin-top:14px">
+      <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);">
+        Quantity (Lots)
+      </label>
+      <input type="number" id="algo-qty-lots" class="algo-qty-input" value="1" min="1" max="50" />
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px" id="algo-qty-note"></div>
+    </div>
+    <div style="margin-top:10px">
+      <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);">
+        Order Type
+      </label>
+      <select id="algo-order-type" class="algo-qty-input" style="margin-top:4px" onchange="toggleAlgoPrice()">
+        <option value="MARKET">MARKET</option>
+        <option value="LIMIT" selected>LIMIT</option>
+      </select>
+    </div>
+    <div style="margin-top:10px" id="algo-price-field">
+      <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);">
+        Limit Price
+      </label>
+      <input type="number" id="algo-limit-price" class="algo-qty-input" step="0.05" style="margin-top:4px" />
+    </div>
+    <div style="margin-top:10px">
+      <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);">
+        Product
+      </label>
+      <select id="algo-product" class="algo-qty-input" style="margin-top:4px">
+        <option value="MIS">MIS (Intraday)</option>
+        <option value="NRML" selected>NRML (Carry forward)</option>
+      </select>
+    </div>
+    <div class="modal-actions" style="margin-top:18px">
+      <button class="btn-cancel" onclick="closeAlgoModal()">Cancel</button>
+      <button id="algo-confirm-btn" class="btn-confirm" onclick="submitAlgoOrder()" style="min-width:120px">Place Order</button>
+    </div>
+  </div>
 </div>
 
 <!-- ===== ORDER MODAL ===== -->
@@ -1991,7 +2065,13 @@ function renderAlgoBlock(d, idx) {
             <div class="val sl">₹${ce.sl}</div>
           </div>
         </div>
-        <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${ce.strike}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">${ce.reward_risk}x</strong></div>
+        <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${ce.strike}</strong> &nbsp;|&nbsp; Expiry: <strong style="color:var(--text-muted)">${ce.expiry||'—'}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">${ce.reward_risk}x</strong></div>
+        <div style="margin-top:10px;display:flex;gap:8px;">
+          <button class="algo-order-btn ${ceAction==='buy'?'buy':'sell'}"
+            onclick="placeAlgoOrder(${JSON.stringify(ce).replace(/"/g,'&quot;')})">
+            ${ce.txn === 'BUY' ? '🟢 BUY CE' : '🔴 SELL CE'} @ ₹${ce.entry}
+          </button>
+        </div>
       </div>
 
       <!-- PE Card -->
@@ -2014,7 +2094,13 @@ function renderAlgoBlock(d, idx) {
             <div class="val sl">₹${pe.sl}</div>
           </div>
         </div>
-        <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${pe.strike}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">${pe.reward_risk}x</strong></div>
+        <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${pe.strike}</strong> &nbsp;|&nbsp; Expiry: <strong style="color:var(--text-muted)">${pe.expiry||'—'}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">${pe.reward_risk}x</strong></div>
+        <div style="margin-top:10px;display:flex;gap:8px;">
+          <button class="algo-order-btn ${peAction==='buy'?'buy':'sell'}"
+            onclick="placeAlgoOrder(${JSON.stringify(pe).replace(/"/g,'&quot;')})">
+            ${pe.txn === 'BUY' ? '🟢 BUY PE' : '🔴 SELL PE'} @ ₹${pe.entry}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -2034,6 +2120,117 @@ function renderAlgoBlock(d, idx) {
       <ul>${reasons}</ul>
     </div>
   </div>`;
+}
+
+// ============================================================
+// Algo Order Placement
+// ============================================================
+let _algoOrderParams = null;
+
+function placeAlgoOrder(opt) {
+  if (!state.authenticated) {
+    showToast('Please login with Zerodha first to place orders', 'error');
+    return;
+  }
+  _algoOrderParams = opt;
+  const isBuy = opt.txn === 'BUY';
+  const color  = isBuy ? 'var(--green)' : 'var(--red)';
+
+  document.getElementById('algo-modal-title').innerHTML =
+    `<span style="color:${color}">${opt.txn}</span> ${opt.tradingsymbol}`;
+
+  document.getElementById('algo-modal-body').innerHTML = `
+    <div style="background:var(--bg-card2);border-radius:8px;padding:12px;margin:12px 0;">
+      <div class="algo-confirm-row"><span class="lbl">Symbol</span><span class="val">${opt.tradingsymbol}</span></div>
+      <div class="algo-confirm-row"><span class="lbl">Exchange</span><span class="val">${opt.exchange}</span></div>
+      <div class="algo-confirm-row"><span class="lbl">Strike</span><span class="val">${opt.strike}</span></div>
+      <div class="algo-confirm-row"><span class="lbl">Expiry</span><span class="val">${opt.expiry||'—'}</span></div>
+      <div class="algo-confirm-row"><span class="lbl">Action</span><span class="val" style="color:${color}">${opt.txn}</span></div>
+      <div class="algo-confirm-row"><span class="lbl">Entry Price</span><span class="val">₹${opt.entry}</span></div>
+      <div class="algo-confirm-row"><span class="lbl">Target</span><span class="val g">₹${opt.target}</span></div>
+      <div class="algo-confirm-row"><span class="lbl">Stop Loss</span><span class="val r">₹${opt.sl}</span></div>
+      <div class="algo-confirm-row"><span class="lbl">Lot Size</span><span class="val">${opt.lot_size} qty/lot</span></div>
+    </div>`;
+
+  // Set defaults
+  document.getElementById('algo-qty-lots').value = 1;
+  document.getElementById('algo-limit-price').value = opt.entry;
+  document.getElementById('algo-order-type').value = 'LIMIT';
+  document.getElementById('algo-product').value = 'NRML';
+  document.getElementById('algo-price-field').style.display = 'block';
+  document.getElementById('algo-qty-note').textContent =
+    `1 lot = ${opt.lot_size} qty — Total qty = ${opt.lot_size}`;
+
+  // Update qty note live
+  document.getElementById('algo-qty-lots').oninput = function() {
+    const lots = parseInt(this.value) || 1;
+    document.getElementById('algo-qty-note').textContent =
+      `${lots} lot${lots>1?'s':''} = ${lots * opt.lot_size} qty total`;
+    document.getElementById('algo-confirm-btn').textContent =
+      `Place ${opt.txn} Order (${lots * opt.lot_size} qty)`;
+  };
+  document.getElementById('algo-confirm-btn').textContent =
+    `Place ${opt.txn} Order (${opt.lot_size} qty)`;
+  document.getElementById('algo-confirm-btn').style.background =
+    isBuy ? 'var(--green)' : 'var(--red)';
+
+  document.getElementById('algo-confirm-modal').classList.add('open');
+}
+
+function closeAlgoModal() {
+  document.getElementById('algo-confirm-modal').classList.remove('open');
+  _algoOrderParams = null;
+}
+
+function toggleAlgoPrice() {
+  const type = document.getElementById('algo-order-type').value;
+  document.getElementById('algo-price-field').style.display =
+    (type === 'LIMIT' || type === 'SL') ? 'block' : 'none';
+}
+
+async function submitAlgoOrder() {
+  if (!_algoOrderParams) return;
+  const opt      = _algoOrderParams;
+  const lots     = parseInt(document.getElementById('algo-qty-lots').value) || 1;
+  const qty      = lots * opt.lot_size;
+  const orderType = document.getElementById('algo-order-type').value;
+  const price    = parseFloat(document.getElementById('algo-limit-price').value) || opt.entry;
+  const product  = document.getElementById('algo-product').value;
+
+  const btn = document.getElementById('algo-confirm-btn');
+  btn.textContent = 'Placing…';
+  btn.disabled = true;
+
+  const params = {
+    tradingsymbol: opt.tradingsymbol,
+    exchange: opt.exchange,
+    transaction_type: opt.txn,
+    quantity: qty,
+    order_type: orderType,
+    product: product,
+    tag: 'ALGO',
+  };
+  if (orderType === 'LIMIT' || orderType === 'SL') params.price = price;
+
+  try {
+    const res = await fetch('/api/order', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(params),
+    });
+    const d = await res.json();
+    if (res.ok) {
+      showToast(`✅ Order placed! ID: ${d.order_id} — ${opt.txn} ${qty} ${opt.tradingsymbol}`, 'success');
+      closeAlgoModal();
+    } else {
+      showToast(`❌ Order failed: ${d.detail}`, 'error');
+    }
+  } catch(e) {
+    showToast('Network error placing order', 'error');
+  } finally {
+    btn.textContent = `Place ${opt.txn} Order`;
+    btn.disabled = false;
+  }
 }
 
 // ============================================================

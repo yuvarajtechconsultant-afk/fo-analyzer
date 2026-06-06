@@ -671,6 +671,21 @@ async def place_order(request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _build_nfo_symbol(index: str, expiry_date, strike: int, opt_type: str) -> str:
+    """
+    Build Zerodha NFO/BFO trading symbol.
+    NIFTY  weekly format: NIFTY25JUN22500CE  (NIFTYYYMMMDDDDDCE)
+    SENSEX weekly format: SENSEX25JUN72100PE
+    """
+    month_map = {1:"JAN",2:"FEB",3:"MAR",4:"APR",5:"MAY",6:"JUN",
+                 7:"JUL",8:"AUG",9:"SEP",10:"OCT",11:"NOV",12:"DEC"}
+    yy    = str(expiry_date.year)[2:]
+    mon   = month_map[expiry_date.month]
+    day   = str(expiry_date.day).zfill(2)
+    name  = "NIFTY" if index.upper() == "NIFTY" else "SENSEX"
+    return f"{name}{yy}{mon}{day}{strike}{opt_type.upper()}"
+
+
 @app.get("/api/algo-signals")
 async def algo_signals():
     """
@@ -794,6 +809,8 @@ async def algo_signals():
 
             lot_size = 75 if index == "NIFTY" else 20
             strike_gap = 50 if index == "NIFTY" else 100
+            exchange = "NFO" if index == "NIFTY" else "BFO"
+            expiry_dt = get_nearest_expiry(index)
 
             if score_buy >= 8 and score_buy > score_sell + 2:
                 direction = "STRONG BUY"
@@ -878,18 +895,28 @@ async def algo_signals():
                 "ce": {
                     "strike": ce_strike,
                     "action": "BUY CE" if direction in ("STRONG BUY","MILD BUY") else "SELL CE",
+                    "txn": "BUY" if direction in ("STRONG BUY","MILD BUY") else "SELL",
                     "entry": ce_premium,
                     "target": ce_target,
                     "sl": ce_sl,
                     "reward_risk": round((ce_target - ce_premium) / max(ce_premium - ce_sl, 0.1), 2),
+                    "tradingsymbol": _build_nfo_symbol(index, expiry_dt, ce_strike, "CE"),
+                    "exchange": exchange,
+                    "lot_size": lot_size,
+                    "expiry": expiry_dt.strftime("%d %b %Y"),
                 },
                 "pe": {
                     "strike": pe_strike,
                     "action": "BUY PE" if direction in ("STRONG SELL","MILD SELL") else "SELL PE",
+                    "txn": "BUY" if direction in ("STRONG SELL","MILD SELL") else "SELL",
                     "entry": pe_premium,
                     "target": pe_target,
                     "sl": pe_sl,
                     "reward_risk": round(abs(pe_target - pe_premium) / max(abs(pe_premium - pe_sl), 0.1), 2),
+                    "tradingsymbol": _build_nfo_symbol(index, expiry_dt, pe_strike, "PE"),
+                    "exchange": exchange,
+                    "lot_size": lot_size,
+                    "expiry": expiry_dt.strftime("%d %b %Y"),
                 },
                 "timestamp": datetime.now().isoformat(),
             })
