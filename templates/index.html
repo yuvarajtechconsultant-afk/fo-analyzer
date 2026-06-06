@@ -2249,25 +2249,42 @@ async function loadGEX(idx) {
     // Chart
     destroyChart('gex');
     const strikes = (d.strikes||[]);
+    // GEX values already in Crore from backend
     const ctx = document.getElementById('gex-chart').getContext('2d');
+    document.getElementById('gex-chart').style.height = '300px';
     advState.charts['gex'] = new Chart(ctx, {
       type: 'bar',
       data: {
         labels: strikes.map(s=>s.strike),
-        datasets: [{
-          label: 'Net GEX',
-          data: strikes.map(s=>s.net_gex),
-          backgroundColor: strikes.map(s=>s.net_gex>0?'rgba(0,217,100,0.6)':'rgba(255,71,87,0.6)'),
-          borderColor: strikes.map(s=>s.net_gex>0?'#00d964':'#ff4757'),
-          borderWidth: 1,
-        }]
+        datasets: [
+          {
+            label: 'CE GEX (Cr)',
+            data: strikes.map(s=> +s.ce_gex.toFixed(2)),
+            backgroundColor: 'rgba(0,217,100,0.6)',
+            borderColor: '#00d964',
+            borderWidth: 1,
+            stack: 'gex',
+          },
+          {
+            label: 'PE GEX (Cr)',
+            data: strikes.map(s=> -Math.abs(+s.pe_gex.toFixed(2))),
+            backgroundColor: 'rgba(255,71,87,0.6)',
+            borderColor: '#ff4757',
+            borderWidth: 1,
+            stack: 'gex',
+          }
+        ]
       },
       options: {
-        responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>`GEX: ${c.raw?.toFixed(2)}`}} },
-        scales:{
-          x:{ ticks:{color:'#6e7681',font:{size:10}}, grid:{color:'rgba(33,38,45,.5)'} },
-          y:{ ticks:{color:'#6e7681'}, grid:{color:'rgba(33,38,45,.5)'}, border:{color:'transparent'} }
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color:'#c9d1d9', font:{size:11} } },
+          tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.raw?.toFixed(2)} Cr` } }
+        },
+        scales: {
+          x: { stacked:true, ticks:{color:'#6e7681',font:{size:10},maxRotation:45}, grid:{color:'rgba(33,38,45,.5)'} },
+          y: { stacked:true, ticks:{color:'#6e7681', callback: v => v+'Cr'}, grid:{color:'rgba(33,38,45,.5)'} }
         }
       }
     });
@@ -2347,21 +2364,57 @@ async function loadIVSurface(idx) {
     destroyChart('iv');
     const rows = (d.strikes||[]).filter(r=>r.ce_iv>0||r.pe_iv>0);
     const ctx = document.getElementById('iv-chart').getContext('2d');
+    document.getElementById('iv-chart').style.height = '280px';
     advState.charts['iv'] = new Chart(ctx, {
-      type:'line',
-      data:{
+      type: 'line',
+      data: {
         labels: rows.map(r=>r.strike),
-        datasets:[
-          {label:'CE IV %',data:rows.map(r=>r.ce_iv),borderColor:'#00d964',backgroundColor:'rgba(0,217,100,0.08)',tension:0.4,pointRadius:3,fill:false},
-          {label:'PE IV %',data:rows.map(r=>r.pe_iv),borderColor:'#ff4757',backgroundColor:'rgba(255,71,87,0.08)',tension:0.4,pointRadius:3,fill:false},
+        datasets: [
+          {
+            label: 'CE IV %',
+            data: rows.map(r=>+r.ce_iv.toFixed(2)),
+            borderColor: '#00d964',
+            backgroundColor: 'rgba(0,217,100,0.08)',
+            tension: 0.4,
+            pointRadius: 3,
+            pointBackgroundColor: '#00d964',
+            fill: false,
+            borderWidth: 2,
+          },
+          {
+            label: 'PE IV %',
+            data: rows.map(r=>+r.pe_iv.toFixed(2)),
+            borderColor: '#ff4757',
+            backgroundColor: 'rgba(255,71,87,0.08)',
+            tension: 0.4,
+            pointRadius: 3,
+            pointBackgroundColor: '#ff4757',
+            fill: false,
+            borderWidth: 2,
+          },
+          {
+            label: 'Skew (PE-CE)',
+            data: rows.map(r=>+r.skew.toFixed(2)),
+            borderColor: '#ffd700',
+            backgroundColor: 'rgba(255,215,0,0.06)',
+            tension: 0.4,
+            pointRadius: 2,
+            fill: false,
+            borderWidth: 1,
+            borderDash: [4,3],
+          }
         ]
       },
-      options:{
-        responsive:true,maintainAspectRatio:false,
-        plugins:{legend:{labels:{color:'#c9d1d9',font:{size:11}}}},
-        scales:{
-          x:{ticks:{color:'#6e7681',font:{size:10}},grid:{color:'rgba(33,38,45,.5)'}},
-          y:{ticks:{color:'#6e7681',callback:v=>v+'%'},grid:{color:'rgba(33,38,45,.5)'},border:{color:'transparent'}}
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color:'#c9d1d9', font:{size:11} } },
+          tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.raw}%` } }
+        },
+        scales: {
+          x: { ticks:{color:'#6e7681',font:{size:10},maxRotation:45,maxTicksLimit:12}, grid:{color:'rgba(33,38,45,.5)'} },
+          y: { ticks:{color:'#6e7681', callback: v=>v+'%'}, grid:{color:'rgba(33,38,45,.5)'} }
         }
       }
     });
@@ -2426,37 +2479,120 @@ async function loadPayoff() {
         <div class="payoff-stat"><span style="color:var(--text-muted)">Breakevens</span><span style="font-family:var(--font-mono)">${(d.breakevens||[]).join(' / ') || '—'}</span></div>
         <div class="payoff-stat"><span style="color:var(--text-muted)">Lot Size</span><span style="font-family:var(--font-mono)">${d.lot_size}</span></div>
       </div>`;
-    // Chart
+    // Chart — split into profit (green) and loss (red) datasets
     const pts = d.payoff || [];
     const ctx = document.getElementById('payoff-chart').getContext('2d');
+    document.getElementById('payoff-chart').style.height = '280px';
+    // Zero-cross line for reference
+    const profitData = pts.map(p => p.pnl >= 0 ? p.pnl : null);
+    const lossData   = pts.map(p => p.pnl <  0 ? p.pnl : null);
+    const allData    = pts.map(p => p.pnl);
     advState.charts['payoff'] = new Chart(ctx, {
-      type:'line',
-      data:{
-        labels: pts.map(p=>p.price),
-        datasets:[{
-          label:'P&L (₹)',
-          data: pts.map(p=>p.pnl),
-          borderColor: pts.map(p=>p.pnl>=0?'#00d964':'#ff4757'),
-          segment:{ borderColor: ctx2 => ctx2.p1.parsed.y>=0?'#00d964':'#ff4757' },
-          backgroundColor: ctx2 => {
-            const grad = ctx2.chart.ctx.createLinearGradient(0,0,0,280);
-            grad.addColorStop(0,'rgba(0,217,100,0.15)');
-            grad.addColorStop(1,'rgba(255,71,87,0.05)');
-            return grad;
+      type: 'line',
+      data: {
+        labels: pts.map(p => p.price),
+        datasets: [
+          {
+            label: 'Profit (₹)',
+            data: profitData,
+            borderColor: '#00d964',
+            backgroundColor: 'rgba(0,217,100,0.15)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 2,
+            spanGaps: true,
           },
-          fill:true, tension:0.2, pointRadius:0, borderWidth:2,
-        }]
+          {
+            label: 'Loss (₹)',
+            data: lossData,
+            borderColor: '#ff4757',
+            backgroundColor: 'rgba(255,71,87,0.15)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 2,
+            spanGaps: true,
+          },
+          {
+            label: 'P&L',
+            data: allData,
+            borderColor: 'rgba(255,255,255,0.15)',
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 1,
+            borderDash: [3,3],
+          }
+        ]
       },
-      options:{
-        responsive:true, maintainAspectRatio:false,
-        plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`P&L: ₹${c.raw?.toLocaleString('en-IN')}`}}},
-        scales:{
-          x:{ticks:{color:'#6e7681',font:{size:9},maxTicksLimit:10},grid:{color:'rgba(33,38,45,.5)'}},
-          y:{ticks:{color:'#6e7681',callback:v=>'₹'+v.toLocaleString('en-IN')},grid:{color:'rgba(33,38,45,.5)'},border:{color:'transparent'}}
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+          legend: { labels: { color:'#c9d1d9', font:{size:11}, filter: i => i.datasetIndex < 2 } },
+          tooltip: {
+            callbacks: {
+              label: c => {
+                if (c.datasetIndex === 2) return `P&L: ₹${c.raw?.toLocaleString('en-IN')}`;
+                return null;
+              },
+              filter: c => c.datasetIndex === 2
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color:'#6e7681', font:{size:9}, maxTicksLimit:12,
+              callback: (v,i) => pts[i] ? Math.round(pts[i].price).toLocaleString('en-IN') : ''
+            },
+            grid: { color:'rgba(33,38,45,.5)' }
+          },
+          y: {
+            ticks: { color:'#6e7681', callback: v => '₹'+(v/1000).toFixed(0)+'K' },
+            grid: { color:'rgba(33,38,45,.5)' }
+          }
         }
       }
     });
-  } catch(e) { console.error('Payoff error',e); }
+    // Draw breakeven vertical lines
+    if (d.breakevens?.length) {
+      const bePlugin = {
+        id:'beLines',
+        afterDraw(chart) {
+          const { ctx, scales:{x,y} } = chart;
+          d.breakevens.forEach(be => {
+            const idx2 = pts.findIndex(p => p.price >= be);
+            if (idx2 < 0) return;
+            const xPos = x.getPixelForValue(idx2);
+            ctx.save();
+            ctx.beginPath();
+            ctx.strokeStyle = '#ffd700';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5,4]);
+            ctx.moveTo(xPos, y.top);
+            ctx.lineTo(xPos, y.bottom);
+            ctx.stroke();
+            ctx.fillStyle = '#ffd700';
+            ctx.font = '10px monospace';
+            ctx.fillText('BE '+be.toLocaleString('en-IN'), xPos+3, y.top+14);
+            ctx.restore();
+          });
+          // Zero line
+          const y0 = y.getPixelForValue(0);
+          ctx.save();
+          ctx.beginPath();
+          ctx.strokeStyle='rgba(255,255,255,0.2)';
+          ctx.lineWidth=1; ctx.setLineDash([]);
+          ctx.moveTo(x.left,y0); ctx.lineTo(x.right,y0);
+          ctx.stroke(); ctx.restore();
+        }
+      };
+      advState.charts['payoff'].options.plugins.beLines = {};
+      Chart.register(bePlugin);
+    }
+  } catch(e) { console.error('Payoff error', e); document.getElementById('payoff-details').innerHTML+=`<div style="color:var(--red);margin-top:10px">Chart error: ${e.message}</div>`; }
 }
 
 // ── Backtest ─────────────────────────────────────────────────

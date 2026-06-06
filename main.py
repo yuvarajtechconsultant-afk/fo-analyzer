@@ -974,9 +974,10 @@ async def gamma_exposure(index: str):
         pe_gamma = (pe.get("greeks") or {}).get("gamma", 0) or 0
         ce_oi    = ce.get("oi", 0) or 0
         pe_oi    = pe.get("oi", 0) or 0
-        # GEX = gamma × OI × lot_size × spot² / 100 (standard formula)
-        ce_gex   = ce_gamma * ce_oi * lot_size * spot * spot / 1e7
-        pe_gex   = pe_gamma * pe_oi * lot_size * spot * spot / 1e7
+        # GEX in Crore = gamma × OI × lot_size × spot² / 1e9
+        # Dividing by 1e9 gives readable Crore-scale numbers
+        ce_gex   = ce_gamma * ce_oi * lot_size * spot * spot / 1e9
+        pe_gex   = pe_gamma * pe_oi * lot_size * spot * spot / 1e9
         net_gex  = round(ce_gex - pe_gex, 2)
         total_gex += net_gex
         gex_data.append({
