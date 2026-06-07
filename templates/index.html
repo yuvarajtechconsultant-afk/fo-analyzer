@@ -719,6 +719,9 @@
       <div class="nav-item" onclick="switchTab('advanced')" data-tab="advanced">
         <span class="nav-icon">🔬</span> Advanced
       </div>
+      <div class="nav-item" onclick="switchTab('smart-oi')" data-tab="smart-oi">
+        <span class="nav-icon">🧠</span> Smart OI
+      </div>
     </nav>
   </aside>
 
@@ -1272,6 +1275,131 @@
       </div>
     </div>
 
+    <!-- ===== SMART OI TAB ===== -->
+    <div class="tab-panel" id="tab-smart-oi">
+
+      <!-- Header & Controls -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+        <div>
+          <h2 style="font-size:16px;font-weight:700;color:var(--text-bright);margin-bottom:2px;">🧠 Smart OI — CE-PE Ratio Chart</h2>
+          <p style="font-size:12px;color:var(--text-muted);">Strike-wise Call vs Put Open Interest · Ratio · Net OI · Writing activity</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button class="index-btn active" id="soi-nifty-btn"   onclick="setSOIIndex('NIFTY')">NIFTY</button>
+          <button class="index-btn"        id="soi-sensex-btn"  onclick="setSOIIndex('SENSEX')">SENSEX</button>
+          <select class="expiry-select" id="soi-expiry" onchange="loadSmartOI()">
+            <option value="">Loading…</option>
+          </select>
+          <select class="expiry-select" id="soi-chart-type" onchange="loadSmartOI()" style="min-width:140px;">
+            <option value="oi_bars">CE vs PE OI</option>
+            <option value="ratio">CE/PE Ratio</option>
+            <option value="net_oi">Net OI (CE−PE)</option>
+            <option value="oi_change">OI Change</option>
+          </select>
+          <button class="interval-btn active" onclick="loadSmartOI()">↻ Refresh</button>
+        </div>
+      </div>
+
+      <!-- Summary Cards -->
+      <div class="grid-4 mt-2" id="soi-metrics" style="margin-bottom:14px;">
+        <div class="metric-card">
+          <div class="metric-label">Total CE OI</div>
+          <div class="metric-value num-red" id="soi-total-ce">—</div>
+          <div class="metric-sub">Call writing</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Total PE OI</div>
+          <div class="metric-value num-green" id="soi-total-pe">—</div>
+          <div class="metric-sub">Put writing</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">PCR (OI)</div>
+          <div class="metric-value" id="soi-pcr">—</div>
+          <div class="metric-sub" id="soi-pcr-view">—</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">Key Levels</div>
+          <div class="metric-value" style="font-size:12px;line-height:1.6">
+            <span style="color:var(--red)">R: </span><span id="soi-resistance">—</span><br>
+            <span style="color:var(--green)">S: </span><span id="soi-support">—</span>
+          </div>
+          <div class="metric-sub">Resistance / Support</div>
+        </div>
+      </div>
+
+      <!-- CE-PE OI Summary Bar -->
+      <div style="background:#161b22;border-radius:8px;border:1px solid #21262d;padding:10px 14px;margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px;">
+          <span style="color:var(--red)">CE OI: <b id="soi-ce-pct-lbl">—</b></span>
+          <span style="color:var(--text-muted);font-size:11px;">Call ← ──────────── → Put</span>
+          <span style="color:var(--green)">PE OI: <b id="soi-pe-pct-lbl">—</b></span>
+        </div>
+        <div style="display:flex;height:12px;border-radius:6px;overflow:hidden;background:#21262d;">
+          <div id="soi-ce-bar" style="background:linear-gradient(90deg,#ff4757,#ff6b6b);height:100%;transition:width 0.5s;"></div>
+          <div id="soi-pe-bar" style="background:linear-gradient(90deg,#00d964,#26de81);height:100%;transition:width 0.5s;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:4px;">
+          <span id="soi-spot-lbl">Spot: —</span>
+          <span id="soi-atm-lbl">ATM: —</span>
+          <span id="soi-expiry-lbl">Expiry: —</span>
+        </div>
+      </div>
+
+      <!-- Main Chart -->
+      <div class="card" style="padding:16px;margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <span id="soi-chart-title" style="font-size:13px;font-weight:600;color:var(--text-bright);">CE vs PE Open Interest by Strike</span>
+          <div style="display:flex;gap:12px;font-size:11px;">
+            <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;background:#ff6b6b;display:inline-block;border-radius:2px;"></span>CE OI</span>
+            <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;background:#00d964;display:inline-block;border-radius:2px;"></span>PE OI</span>
+            <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;background:#ffd700;display:inline-block;border-radius:2px;"></span>Ratio</span>
+          </div>
+        </div>
+        <div style="position:relative;height:340px;">
+          <canvas id="soi-main-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Net OI Chart -->
+      <div class="card" style="padding:16px;margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:600;color:var(--text-bright);margin-bottom:10px;">
+          Net OI (CE − PE) &nbsp;<span style="font-size:11px;font-weight:400;color:var(--text-muted);">Positive = Call heavy · Negative = Put heavy</span>
+        </div>
+        <div style="position:relative;height:180px;">
+          <canvas id="soi-net-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Strike-wise Table -->
+      <div class="card" style="padding:0;overflow:hidden;">
+        <div style="padding:12px 14px;border-bottom:1px solid #21262d;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:13px;font-weight:600;color:var(--text-bright);">Strike-wise OI Detail</span>
+          <span style="font-size:11px;color:var(--text-muted);">ATM highlighted in gold</span>
+        </div>
+        <div style="overflow-x:auto;max-height:380px;overflow-y:auto;">
+          <table class="chain-table" style="font-size:11px;">
+            <thead>
+              <tr>
+                <th style="text-align:right">CE OI</th>
+                <th style="text-align:right">CE Chng</th>
+                <th style="text-align:right">CE LTP</th>
+                <th class="center" style="background:#1c2128;min-width:80px">STRIKE</th>
+                <th>PE LTP</th>
+                <th>PE Chng</th>
+                <th>PE OI</th>
+                <th style="text-align:center">CE/PE Ratio</th>
+                <th style="text-align:center">Signal</th>
+              </tr>
+            </thead>
+            <tbody id="soi-tbody">
+              <tr><td colspan="9" class="loading-overlay"><div class="spinner"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- end tab-smart-oi -->
+
   </main>
 </div>
 
@@ -1413,6 +1541,7 @@ function switchTab(tab) {
   if (tab === 'oi-history')   initOIHistoryTab();
   if (tab === 'algo')         loadAlgo();
   if (tab === 'advanced')     loadAdvanced();
+  if (tab === 'smart-oi')    { populateSOIExpiry(); loadSmartOI(); }
 }
 
 // ============================================================
@@ -3200,6 +3329,281 @@ function showToast(msg, type='success') {
 document.getElementById('order-modal').addEventListener('click', function(e) {
   if (e.target === this) closeModal();
 });
+
+// ============================================================
+// SMART OI — CE-PE Ratio Chart
+// ============================================================
+let soiIndexState = 'NIFTY';
+let soiMainChart  = null;
+let soiNetChart   = null;
+
+function setSOIIndex(idx) {
+  soiIndexState = idx;
+  document.getElementById('soi-nifty-btn').classList.toggle('active', idx === 'NIFTY');
+  document.getElementById('soi-sensex-btn').classList.toggle('active', idx === 'SENSEX');
+  populateSOIExpiry();
+  loadSmartOI();
+}
+
+async function populateSOIExpiry() {
+  try {
+    const r = await fetch(`/api/smart-oi/${soiIndexState}`);
+    const d = await r.json();
+    const sel = document.getElementById('soi-expiry');
+    const expiries = d.expiry_list || [d.expiry];
+    sel.innerHTML = expiries.map(e => `<option value="${e}">${e}</option>`).join('');
+  } catch(e) {}
+}
+
+async function loadSmartOI() {
+  const expiry    = document.getElementById('soi-expiry').value || '';
+  const chartType = document.getElementById('soi-chart-type').value;
+  const url = `/api/smart-oi/${soiIndexState}${expiry ? '?expiry=' + expiry : ''}`;
+
+  // Show loading in table
+  document.getElementById('soi-tbody').innerHTML =
+    `<tr><td colspan="9" class="loading-overlay"><div class="spinner"></div></td></tr>`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.statusText);
+    const d = await res.json();
+
+    // ── Summary cards ─────────────────────────────────────
+    const s = d.summary;
+    document.getElementById('soi-total-ce').textContent  = fmtOI(s.total_ce_oi);
+    document.getElementById('soi-total-pe').textContent  = fmtOI(s.total_pe_oi);
+    document.getElementById('soi-pcr').textContent       = fmt(s.overall_pcr, 3);
+    document.getElementById('soi-pcr-view').textContent  = s.pcr_view;
+    document.getElementById('soi-resistance').textContent = fmtNum(s.resistance_strike);
+    document.getElementById('soi-support').textContent   = fmtNum(s.support_strike);
+
+    // PCR view colour
+    const pcrEl = document.getElementById('soi-pcr');
+    pcrEl.style.color = s.overall_pcr > 1.1 ? 'var(--green)' : (s.overall_pcr < 0.9 ? 'var(--red)' : 'var(--text-bright)');
+
+    // ── CE/PE summary bar ──────────────────────────────────
+    const totalOI = (s.total_ce_oi + s.total_pe_oi) || 1;
+    const cePct   = Math.round(s.total_ce_oi / totalOI * 100);
+    const pePct   = 100 - cePct;
+    document.getElementById('soi-ce-bar').style.width   = cePct + '%';
+    document.getElementById('soi-pe-bar').style.width   = pePct + '%';
+    document.getElementById('soi-ce-pct-lbl').textContent = cePct + '%';
+    document.getElementById('soi-pe-pct-lbl').textContent = pePct + '%';
+    document.getElementById('soi-spot-lbl').textContent   = 'Spot: ' + fmtNum(d.spot);
+    document.getElementById('soi-atm-lbl').textContent    = 'ATM: '  + fmtNum(d.atm);
+    document.getElementById('soi-expiry-lbl').textContent = 'Expiry: ' + (d.expiry || '');
+
+    // ── Build main chart ───────────────────────────────────
+    const labels = d.strikes.map(String);
+    const atmIdx = d.strikes.indexOf(d.atm);
+
+    if (soiMainChart) { soiMainChart.destroy(); soiMainChart = null; }
+    const ctx1 = document.getElementById('soi-main-chart').getContext('2d');
+
+    let datasets, chartTitle, chartTypeVal;
+
+    if (chartType === 'oi_bars' || chartType === undefined) {
+      chartTitle = 'CE vs PE Open Interest by Strike';
+      chartTypeVal = 'bar';
+      datasets = [
+        {
+          label: 'CE OI',
+          data: d.ce_oi,
+          backgroundColor: d.strikes.map((s,i) => i === atmIdx ? '#ff4757' : 'rgba(255,107,107,0.75)'),
+          borderColor: 'rgba(255,71,87,0.9)',
+          borderWidth: 1,
+          yAxisID: 'y',
+          order: 2,
+        },
+        {
+          label: 'PE OI',
+          data: d.pe_oi,
+          backgroundColor: d.strikes.map((s,i) => i === atmIdx ? '#00d964' : 'rgba(0,217,100,0.65)'),
+          borderColor: 'rgba(0,217,100,0.9)',
+          borderWidth: 1,
+          yAxisID: 'y',
+          order: 2,
+        },
+        {
+          label: 'CE/PE Ratio',
+          data: d.ratio,
+          type: 'line',
+          borderColor: '#ffd700',
+          backgroundColor: 'rgba(255,215,0,0.08)',
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          borderWidth: 2,
+          tension: 0.3,
+          yAxisID: 'y2',
+          order: 1,
+        },
+      ];
+    } else if (chartType === 'ratio') {
+      chartTitle = 'CE/PE Ratio by Strike';
+      chartTypeVal = 'bar';
+      datasets = [{
+        label: 'CE/PE Ratio',
+        data: d.ratio,
+        backgroundColor: d.ratio.map(r => r > 1 ? 'rgba(255,107,107,0.75)' : 'rgba(0,217,100,0.65)'),
+        borderColor: d.ratio.map(r => r > 1 ? '#ff6b6b' : '#00d964'),
+        borderWidth: 1,
+        yAxisID: 'y',
+      }];
+    } else if (chartType === 'net_oi') {
+      chartTitle = 'Net OI (CE − PE) by Strike';
+      chartTypeVal = 'bar';
+      datasets = [{
+        label: 'Net OI',
+        data: d.net_oi,
+        backgroundColor: d.net_oi.map(v => v > 0 ? 'rgba(255,107,107,0.75)' : 'rgba(0,217,100,0.65)'),
+        borderColor: d.net_oi.map(v => v > 0 ? '#ff6b6b' : '#00d964'),
+        borderWidth: 1,
+        yAxisID: 'y',
+      }];
+    } else if (chartType === 'oi_change') {
+      chartTitle = 'OI Change by Strike (CE vs PE)';
+      chartTypeVal = 'bar';
+      datasets = [
+        {
+          label: 'CE OI Change',
+          data: d.ce_oi_change,
+          backgroundColor: d.ce_oi_change.map(v => v >= 0 ? 'rgba(255,107,107,0.75)' : 'rgba(255,107,107,0.3)'),
+          borderColor: '#ff6b6b', borderWidth: 1, yAxisID: 'y',
+        },
+        {
+          label: 'PE OI Change',
+          data: d.pe_oi_change,
+          backgroundColor: d.pe_oi_change.map(v => v >= 0 ? 'rgba(0,217,100,0.65)' : 'rgba(0,217,100,0.25)'),
+          borderColor: '#00d964', borderWidth: 1, yAxisID: 'y',
+        },
+      ];
+    }
+
+    document.getElementById('soi-chart-title').textContent = chartTitle;
+
+    soiMainChart = new Chart(ctx1, {
+      type: chartTypeVal,
+      data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 400 },
+        plugins: {
+          legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const v = ctx.raw;
+                if (ctx.dataset.label === 'CE/PE Ratio') return `Ratio: ${v.toFixed(3)}`;
+                return `${ctx.dataset.label}: ${fmtOI(v)}`;
+              },
+            },
+          },
+          // ATM vertical marker
+          annotation: undefined,
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: ctx2 => {
+                const idx = ctx2.index;
+                return d.strikes[idx] === d.atm ? '#ffd700' : '#8b949e';
+              },
+              font: { size: 9 },
+              maxRotation: 45,
+            },
+            grid: { color: '#21262d' },
+          },
+          y: {
+            position: 'left',
+            ticks: { color: '#8b949e', font: { size: 10 }, callback: v => fmtOI(v) },
+            grid: { color: '#21262d' },
+          },
+          y2: {
+            position: 'right',
+            display: chartType === 'oi_bars',
+            ticks: { color: '#ffd700', font: { size: 10 } },
+            grid: { drawOnChartArea: false },
+            title: { display: true, text: 'Ratio', color: '#ffd700', font: { size: 10 } },
+          },
+        },
+      },
+    });
+
+    // ── Net OI mini chart ──────────────────────────────────
+    if (soiNetChart) { soiNetChart.destroy(); soiNetChart = null; }
+    const ctx2 = document.getElementById('soi-net-chart').getContext('2d');
+    soiNetChart = new Chart(ctx2, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Net OI (CE−PE)',
+          data: d.net_oi,
+          backgroundColor: d.net_oi.map(v => v > 0 ? 'rgba(255,71,87,0.7)' : 'rgba(0,217,100,0.7)'),
+          borderColor:     d.net_oi.map(v => v > 0 ? '#ff4757' : '#00d964'),
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { duration: 400 },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => `Net OI: ${fmtOI(c.raw)}` } },
+        },
+        scales: {
+          x: { ticks: { color: '#8b949e', font: { size: 9 }, maxRotation: 45 }, grid: { color: '#21262d' } },
+          y: { ticks: { color: '#8b949e', font: { size: 10 }, callback: v => fmtOI(v) }, grid: { color: '#21262d' } },
+        },
+      },
+    });
+
+    // ── Strike Table ───────────────────────────────────────
+    const signalColor = {
+      'RESISTANCE':     '#ff4757',
+      'SUPPORT':        '#00d964',
+      'CALL WRITING':   '#ff9999',
+      'PUT WRITING':    '#66d98a',
+      'BOTH ADDING':    '#ffd700',
+      'BOTH UNWINDING': '#8b949e',
+      'NEUTRAL':        '#8b949e',
+    };
+    const chgFmt = v => `<span style="color:${v>=0?'#00d964':'#ff4757'}">${v>=0?'+':''}${fmtOI(v)}</span>`;
+
+    const rows = d.strikes.map((strike, i) => {
+      const isATM = strike === d.atm;
+      const ratio = d.ratio[i] || 0;
+      const sig   = d.interpretation[i] || '';
+      const bgRow = isATM ? 'background:rgba(255,215,0,0.06)' : (i%2===0?'':'background:rgba(255,255,255,0.02)');
+      const scol  = signalColor[sig] || '#8b949e';
+      return `<tr style="${bgRow}">
+        <td style="text-align:right;font-weight:${d.ce_oi[i]>0?'600':'400'}">${fmtOI(d.ce_oi[i])}</td>
+        <td style="text-align:right">${chgFmt(d.ce_oi_change[i])}</td>
+        <td style="text-align:right;color:#ff9999">${fmt(d.ce_ltp[i],2)}</td>
+        <td class="strike-cell" style="background:#1c2128;font-weight:700;font-size:12px;color:${isATM?'#ffd700':'#e6edf3'}">${strike}${isATM?' ★':''}</td>
+        <td style="color:#66d98a">${fmt(d.pe_ltp[i],2)}</td>
+        <td>${chgFmt(d.pe_oi_change[i])}</td>
+        <td style="font-weight:${d.pe_oi[i]>0?'600':'400'}">${fmtOI(d.pe_oi[i])}</td>
+        <td style="text-align:center;color:${ratio>1?'#ff6b6b':ratio<1?'#00d964':'#8b949e'};font-weight:600">${ratio.toFixed(2)}</td>
+        <td style="text-align:center"><span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${scol}22;color:${scol};font-weight:600;">${sig}</span></td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('soi-tbody').innerHTML = rows ||
+      `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No data</td></tr>`;
+
+    // Scroll ATM into view
+    setTimeout(() => {
+      const atmRow = document.querySelector('#soi-tbody .strike-cell');
+      if (atmRow) atmRow.closest('tr').scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 150);
+
+  } catch(e) {
+    document.getElementById('soi-tbody').innerHTML =
+      `<tr><td colspan="9" style="text-align:center;color:var(--red);padding:20px">Error: ${e.message}</td></tr>`;
+  }
+}
 </script>
 </body>
 </html>

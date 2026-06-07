@@ -1627,6 +1627,152 @@ async def dashboard():
 
 
 # ---------------------------------------------------------------------------
+# Smart OI — CE-PE Ratio Chart
+# ---------------------------------------------------------------------------
+
+@app.get("/api/smart-oi/{index}")
+async def smart_oi(index: str, expiry: Optional[str] = None):
+    """
+    Smart OI: strike-wise CE OI vs PE OI, ratio, net OI, and OI interpretation.
+    Returns data for the CE-PE Ratio bar chart and summary metrics.
+    """
+    index = index.upper()
+    if not expiry:
+        expiry = get_nearest_expiry(index).strftime("%Y-%m-%d")
+
+    chain, spot = _get_option_chain_list(index, expiry)
+    atm = get_atm_strike(spot, index)
+
+    strikes        = []
+    ce_oi_list     = []
+    pe_oi_list     = []
+    ce_oi_chg_list = []
+    pe_oi_chg_list = []
+    ce_ltp_list    = []
+    pe_ltp_list    = []
+    ratio_list     = []
+    net_oi_list    = []
+    interpretation_list = []
+
+    total_ce_oi = total_pe_oi = 0
+    max_ce_oi   = max_pe_oi   = 1
+
+    # First pass — collect raw values
+    rows_raw = []
+    for row in chain:
+        strike   = row.get("strike", 0)
+        ce       = row.get("CE") or {}
+        pe       = row.get("PE") or {}
+        ce_oi    = ce.get("oi", 0)    or 0
+        pe_oi    = pe.get("oi", 0)    or 0
+        ce_chg   = ce.get("oi_change", 0) or 0
+        pe_chg   = pe.get("oi_change", 0) or 0
+        ce_ltp   = ce.get("ltp", 0)  or 0
+        pe_ltp   = pe.get("ltp", 0)  or 0
+
+        total_ce_oi += ce_oi
+        total_pe_oi += pe_oi
+        if ce_oi > max_ce_oi: max_ce_oi = ce_oi
+        if pe_oi > max_pe_oi: max_pe_oi = pe_oi
+
+        rows_raw.append({
+            "strike": strike, "ce_oi": ce_oi, "pe_oi": pe_oi,
+            "ce_chg": ce_chg, "pe_chg": pe_chg,
+            "ce_ltp": ce_ltp, "pe_ltp": pe_ltp,
+        })
+
+    # Second pass — compute ratio + interpretation per strike
+    for r in rows_raw:
+        strike = r["strike"]
+        ce_oi  = r["ce_oi"]
+        pe_oi  = r["pe_oi"]
+        ce_chg = r["ce_chg"]
+        pe_chg = r["pe_chg"]
+
+        ratio  = round(ce_oi / pe_oi, 3) if pe_oi > 0 else 0
+        net_oi = ce_oi - pe_oi   # positive = call heavy, negative = put heavy
+
+        # Interpretation logic
+        if strike > spot:        side = "OTM Call"
+        elif strike < spot:      side = "OTM Put"
+        else:                    side = "ATM"
+
+        if ce_oi > pe_oi * 1.5:
+            interp = "RESISTANCE"       # heavy call writing above
+        elif pe_oi > ce_oi * 1.5:
+            interp = "SUPPORT"          # heavy put writing below
+        elif ce_chg > 0 and pe_chg > 0:
+            interp = "BOTH ADDING"      # writers adding on both sides
+        elif ce_chg < 0 and pe_chg < 0:
+            interp = "BOTH UNWINDING"
+        elif ce_chg > abs(pe_chg) * 1.2:
+            interp = "CALL WRITING"
+        elif pe_chg > abs(ce_chg) * 1.2:
+            interp = "PUT WRITING"
+        else:
+            interp = "NEUTRAL"
+
+        strikes.append(strike)
+        ce_oi_list.append(ce_oi)
+        pe_oi_list.append(pe_oi)
+        ce_oi_chg_list.append(ce_chg)
+        pe_oi_chg_list.append(pe_chg)
+        ce_ltp_list.append(r["ce_ltp"])
+        pe_ltp_list.append(r["pe_ltp"])
+        ratio_list.append(ratio)
+        net_oi_list.append(net_oi)
+        interpretation_list.append(interp)
+
+    # Summary
+    overall_pcr = round(total_pe_oi / total_ce_oi, 3) if total_ce_oi > 0 else 1.0
+    # Strike with max CE OI = resistance; max PE OI = support
+    if rows_raw:
+        max_ce_strike = max(rows_raw, key=lambda x: x["ce_oi"])["strike"]
+        max_pe_strike = max(rows_raw, key=lambda x: x["pe_oi"])["strike"]
+    else:
+        max_ce_strike = max_pe_strike = atm
+
+    # PCR sentiment
+    if overall_pcr > 1.3:   pcr_view = "BULLISH"
+    elif overall_pcr > 1.1: pcr_view = "SLIGHTLY BULLISH"
+    elif overall_pcr > 0.9: pcr_view = "NEUTRAL"
+    elif overall_pcr > 0.7: pcr_view = "SLIGHTLY BEARISH"
+    else:                   pcr_view = "BEARISH"
+
+    # Top writing strikes (CE and PE) — most active OI change
+    top_ce_writing = sorted(rows_raw, key=lambda x: x["ce_chg"], reverse=True)[:3]
+    top_pe_writing = sorted(rows_raw, key=lambda x: x["pe_chg"], reverse=True)[:3]
+
+    return JSONResponse(sanitize({
+        "index":        index,
+        "spot":         spot,
+        "expiry":       expiry,
+        "atm":          atm,
+        "expiry_list":  get_expiry_list(index, 5),
+        "strikes":      strikes,
+        "ce_oi":        ce_oi_list,
+        "pe_oi":        pe_oi_list,
+        "ce_oi_change": ce_oi_chg_list,
+        "pe_oi_change": pe_oi_chg_list,
+        "ce_ltp":       ce_ltp_list,
+        "pe_ltp":       pe_ltp_list,
+        "ratio":        ratio_list,
+        "net_oi":       net_oi_list,
+        "interpretation": interpretation_list,
+        "summary": {
+            "total_ce_oi":    total_ce_oi,
+            "total_pe_oi":    total_pe_oi,
+            "overall_pcr":    overall_pcr,
+            "pcr_view":       pcr_view,
+            "resistance_strike": max_ce_strike,
+            "support_strike":    max_pe_strike,
+            "top_ce_writing": top_ce_writing,
+            "top_pe_writing": top_pe_writing,
+        },
+    }))
+
+
+# ---------------------------------------------------------------------------
 # WebSocket — Live Price Streaming
 # ---------------------------------------------------------------------------
 
