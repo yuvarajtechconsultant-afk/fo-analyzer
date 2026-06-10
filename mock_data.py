@@ -165,11 +165,19 @@ def get_mock_historical(index: str, interval: str = "5minute",
 
 
 def get_mock_quote(index: str) -> Dict:
-    """Return a realistic spot quote with OHLC."""
+    """
+    Return a realistic spot quote with OHLC.
+    Deterministic within a 30-second window so every consumer (navbar
+    WebSocket, algo signals, analysis endpoints) sees the same price.
+    """
+    import time as _time
     index = index.upper()
+    bucket = int(_time.time() // 30)
+    rng = random.Random(f"{index}-{bucket}")
+
     if index == "VIX":
-        vix = round(VIX_BASE + random.gauss(0, 0.4), 2)
-        chg = round(random.gauss(0, 0.3), 2)
+        vix = round(VIX_BASE + rng.gauss(0, 0.4), 2)
+        chg = round(rng.gauss(0, 0.3), 2)
         return {
             "symbol": "VIX", "last_price": vix,
             "change": chg, "change_pct": round(chg / VIX_BASE * 100, 2),
@@ -180,17 +188,17 @@ def get_mock_quote(index: str) -> Dict:
         }
 
     base  = NIFTY_BASE if index == "NIFTY" else SENSEX_BASE
-    chg   = round(base * random.gauss(0, DAILY_VOL * 0.6), 2)
+    chg   = round(base * rng.gauss(0, DAILY_VOL * 0.6), 2)
     price = round(base + chg, 2)
     return {
         "symbol": index, "last_price": price,
         "change": chg, "change_pct": round(chg / base * 100, 2),
-        "open":  round(base + base * random.uniform(-0.003, 0.003), 2),
-        "high":  round(price + abs(chg) * random.uniform(0.3, 0.8), 2),
-        "low":   round(price - abs(chg) * random.uniform(0.3, 0.8), 2),
+        "open":  round(base + base * rng.uniform(-0.003, 0.003), 2),
+        "high":  round(price + abs(chg) * rng.uniform(0.3, 0.8), 2),
+        "low":   round(price - abs(chg) * rng.uniform(0.3, 0.8), 2),
         "close": base,
-        "volume": random.randint(500_000, 2_000_000),
-        "oi":    random.randint(10_000_000, 20_000_000),
+        "volume": rng.randint(500_000, 2_000_000),
+        "oi":    rng.randint(10_000_000, 20_000_000),
         "timestamp": datetime.now().isoformat(),
     }
 

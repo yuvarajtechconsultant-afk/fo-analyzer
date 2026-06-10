@@ -56,20 +56,19 @@ MARKET_CLOSE_MINUTE = 30
 def get_nearest_expiry(index: str = "NIFTY") -> date:
     """
     Returns the nearest upcoming expiry date.
-    NIFTY: every Thursday
-    SENSEX: every Friday (monthly), weekly on Tuesday and Thursday in some series
-    For simplicity, NIFTY weekly = nearest Thursday, SENSEX weekly = nearest Friday.
+    NIFTY weekly: Tuesday (NSE moved from Thursday, Sep 2025)
+    SENSEX weekly: Thursday (BSE moved from Friday)
     """
     today = date.today()
     if index.upper() in ("NIFTY", "BANKNIFTY", "FINNIFTY"):
-        # Weekly expiry: Thursday (weekday=3)
-        days_ahead = (3 - today.weekday()) % 7
+        # NSE weekly expiry: Tuesday (weekday=1)
+        days_ahead = (1 - today.weekday()) % 7
         if days_ahead == 0:
             days_ahead = 7
         return today + timedelta(days=days_ahead)
     else:
-        # SENSEX weekly: Friday (weekday=4)
-        days_ahead = (4 - today.weekday()) % 7
+        # BSE (SENSEX) weekly expiry: Thursday (weekday=3)
+        days_ahead = (3 - today.weekday()) % 7
         if days_ahead == 0:
             days_ahead = 7
         return today + timedelta(days=days_ahead)
@@ -77,7 +76,7 @@ def get_nearest_expiry(index: str = "NIFTY") -> date:
 
 def get_monthly_expiry(index: str = "NIFTY") -> date:
     """
-    Returns last Thursday (NIFTY) or last Friday (SENSEX) of the current month.
+    Returns last Tuesday (NIFTY/NSE) or last Thursday (SENSEX/BSE) of the current month.
     """
     today = date.today()
     year = today.year
@@ -89,7 +88,7 @@ def get_monthly_expiry(index: str = "NIFTY") -> date:
     else:
         last_day = date(year, month + 1, 1) - timedelta(days=1)
 
-    target_weekday = 3 if index.upper() in ("NIFTY", "BANKNIFTY", "FINNIFTY") else 4
+    target_weekday = 1 if index.upper() in ("NIFTY", "BANKNIFTY", "FINNIFTY") else 3
     # Walk backwards to find the last occurrence of target_weekday
     day = last_day
     while day.weekday() != target_weekday:
@@ -116,7 +115,7 @@ def get_expiry_list(index: str = "NIFTY", count: int = 5) -> list:
     """
     today = date.today()
     expiries = []
-    target_weekday = 3 if index.upper() in ("NIFTY", "BANKNIFTY", "FINNIFTY") else 4
+    target_weekday = 1 if index.upper() in ("NIFTY", "BANKNIFTY", "FINNIFTY") else 3
 
     check_date = today
     while len(expiries) < count:

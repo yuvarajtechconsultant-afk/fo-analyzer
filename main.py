@@ -937,6 +937,7 @@ async def algo_signals():
     )
 
     results = {}
+    client = get_client()
 
     for index in ["NIFTY", "SENSEX"]:
         try:
@@ -950,8 +951,21 @@ async def algo_signals():
             low   = df["low"]
             spot  = float(close.iloc[-1])
 
+            # Use the live market price for spot (same source as the navbar),
+            # falling back to the last candle close if the quote fails.
+            try:
+                if client.is_authenticated():
+                    live_px = client.get_index_quote(index).get("last_price", 0)
+                else:
+                    live_px = _mock_quote(index)["last_price"]
+                if live_px:
+                    spot = float(live_px)
+            except Exception:
+                pass
+
             # ── Indicators ──────────────────────────────────────
             ema9   = calculate_ema(close, 9)
+            ema20  = calculate_ema(close, 20)
             ema21  = calculate_ema(close, 21)
             ema50  = calculate_ema(close, 50)
             ema200 = calculate_ema(close, 200)
@@ -973,6 +987,7 @@ async def algo_signals():
             atr_val   = float(atr.iloc[i]) if not np.isnan(atr.iloc[i]) else spot * 0.005
             rsi_val   = float(rsi.iloc[i])
             e9        = float(ema9.iloc[i])
+            e20       = float(ema20.iloc[i])
             e21       = float(ema21.iloc[i])
             e50       = float(ema50.iloc[i])
             e200      = float(ema200.iloc[i]) if len(ema200) > i else spot
@@ -985,6 +1000,16 @@ async def algo_signals():
             bb_lower  = float(bb["lower"].iloc[i])
             bb_mid    = float(bb["middle"].iloc[i])
 
+            # EMA 20/50 crossover — detect within the last 3 candles
+            ema_cross_up = ema_cross_down = False
+            for k in range(max(1, i - 2), i + 1):
+                if (float(ema20.iloc[k-1]) <= float(ema50.iloc[k-1])
+                        and float(ema20.iloc[k]) > float(ema50.iloc[k])):
+                    ema_cross_up = True
+                if (float(ema20.iloc[k-1]) >= float(ema50.iloc[k-1])
+                        and float(ema20.iloc[k]) < float(ema50.iloc[k])):
+                    ema_cross_down = True
+
             # ── Score system ─────────────────────────────────────
             score_buy = score_sell = 0
             reasons_buy = []
@@ -995,6 +1020,12 @@ async def algo_signals():
                 score_buy += 2; reasons_buy.append("EMA9 > EMA21 > EMA50 (bullish alignment)")
             if e9 < e21 < e50:
                 score_sell += 2; reasons_sell.append("EMA9 < EMA21 < EMA50 (bearish alignment)")
+
+            # 1b. EMA 20/50 crossover — BUY on cross above, SELL on cross below
+            if ema_cross_up:
+                score_buy += 2; reasons_buy.append("EMA20 crossed above EMA50 (bullish crossover)")
+            if ema_cross_down:
+                score_sell += 2; reasons_sell.append("EMA20 crossed below EMA50 (bearish crossover)")
 
             # 2. Price vs EMA200
             if spot > e200:
@@ -1049,7 +1080,25 @@ async def algo_signals():
             lot_size = LOT_SIZES.get(index.upper(), 25)
             strike_gap = 50 if index == "NIFTY" else 100
             exchange = "NFO" if index == "NIFTY" else "BFO"
+
+            # Real nearest expiry from Zerodha instruments (computed fallback)
             expiry_dt = get_nearest_expiry(index)
+            if client.is_authenticated():
+                try:
+                    instruments = client.get_instruments(exchange)
+                    today = date.today()
+                    real_expiries = sorted(set(
+                        inst["expiry"] for inst in instruments
+                        if inst.get("name", "").upper() == index
+                        and inst.get("instrument_type") in ("CE", "PE")
+                        and isinstance(inst.get("expiry"), date)
+                        and inst["expiry"] >= today
+                    ))
+                    if real_expiries:
+                        expiry_dt = real_expiries[0]
+                except Exception as exp_err:
+                    logger.warning("Could not fetch real expiry for %s: %s", index, exp_err)
+
             atm_strike = round(spot / strike_gap) * strike_gap
 
             # ── Fetch real ATM premiums from live option chain ──────
@@ -1172,6 +1221,9 @@ async def algo_signals():
                 "sell_pct": sell_pct,
                 "rsi": round(rsi_val, 1),
                 "atr": round(atr_val, 1),
+                "ema_cross": ("BULL CROSS" if ema_cross_up
+                              else "BEAR CROSS" if ema_cross_down
+                              else "20 > 50" if e20 > e50 else "20 < 50"),
                 "lot_size": lot_size,
                 "reasons": reasons[:6],
                 "live_premiums": live_ce_ltp > 0 or live_pe_ltp > 0,
@@ -2233,6 +2285,15 @@ def _build_stock_fo_result(
         score -= 1
         reasons.append("Price below EMA20")
 
+    # 1b. EMA 20/50 crossover — BUY on cross above, SELL on cross below
+    ema_cross = tech.get("ema_cross")
+    if ema_cross == "BULLISH":
+        score += 2
+        reasons.append("EMA20 crossed above EMA50 (bullish crossover)")
+    elif ema_cross == "BEARISH":
+        score -= 2
+        reasons.append("EMA20 crossed below EMA50 (bearish crossover)")
+
     # 2. RSI momentum
     if rsi >= 60:
         score += 1
@@ -2291,6 +2352,17 @@ def _build_stock_fo_result(
         "method": "Moving Average",
         "signal": m1,
         "detail": f"Price {spot:,.1f} vs EMA20 {ema20:,.1f} / EMA50 {ema50:,.1f}",
+    })
+
+    # EMA 20/50 crossover method
+    strategies.append({
+        "method": "EMA 20/50 Crossover",
+        "signal": "BUY CE" if ema_cross == "BULLISH"
+                  else "BUY PE" if ema_cross == "BEARISH" else "NEUTRAL",
+        "detail": (f"EMA20 {ema20:,.1f} / EMA50 {ema50:,.1f} · "
+                   + ("crossed above recently" if ema_cross == "BULLISH"
+                      else "crossed below recently" if ema_cross == "BEARISH"
+                      else "no recent cross")),
     })
 
     # Method 2: Support & Resistance breakout with volume
@@ -2382,7 +2454,7 @@ def _build_stock_fo_result(
     if entry and not rr_ok:
         action, confidence, opt_type = "WAIT", "LOW", None
         reasons.append(f"Risk-reward {rr_ratio:.1f} below 1:2 minimum — trade skipped")
-    strategies.insert(2, {
+    strategies.insert(3, {
         "method": "Risk-Reward ≥ 1:2",
         "signal": ("PASS" if rr_ok else "FAIL") if entry else "—",
         "detail": (f"Risk ₹{risk:,.2f} · Reward ₹{reward:,.2f} · R:R 1:{rr_ratio:g}"
@@ -2447,6 +2519,15 @@ def _mock_stock_fo(stock: Dict[str, Any]) -> Dict[str, Any]:
     ema20 = spot * (1 - trend_bias * 0.005)
     ema50 = spot * (1 - trend_bias * 0.011)
 
+    # Recent EMA 20/50 crossover — occasionally fires in the trend direction
+    cross_roll = float(rng.random())
+    if trend_bias > 0.8 and cross_roll < 0.35:
+        ema_cross = "BULLISH"
+    elif trend_bias < -0.8 and cross_roll < 0.35:
+        ema_cross = "BEARISH"
+    else:
+        ema_cross = None
+
     # Futures
     fut_oi        = int(rng.integers(2_000_000, 30_000_000))
     oi_change_pct = float(rng.normal(change_pct * 1.6, 2.5))
@@ -2486,7 +2567,7 @@ def _mock_stock_fo(stock: Dict[str, Any]) -> Dict[str, Any]:
         "buildup":       _classify_fut_buildup(change_pct, oi_change_pct),
         "expiry":        expiry,
     }
-    tech = {"rsi": rsi, "ema20": ema20, "ema50": ema50,
+    tech = {"rsi": rsi, "ema20": ema20, "ema50": ema50, "ema_cross": ema_cross,
             "vwap": vwap, "volume_ratio": volume_ratio}
     opt = {
         "pcr":         round(pcr, 2),
@@ -2548,10 +2629,21 @@ def _live_stock_fo(client: ZerodhaClient, stock: Dict[str, Any]) -> Dict[str, An
         fut_inst["instrument_token"], interval="day", days=120
     )
     closes = pd.Series([c["close"] for c in candles], dtype=float)
+    ema_cross = None
     if len(closes) >= 20:
-        rsi   = float(calculate_rsi(closes, 14).iloc[-1])
-        ema20 = float(calculate_ema(closes, 20).iloc[-1])
-        ema50 = float(calculate_ema(closes, 50).iloc[-1]) if len(closes) >= 50 else float(closes.mean())
+        rsi      = float(calculate_rsi(closes, 14).iloc[-1])
+        ema20_s  = calculate_ema(closes, 20)
+        ema50_s  = calculate_ema(closes, 50) if len(closes) >= 50 else pd.Series([closes.mean()] * len(closes))
+        ema20 = float(ema20_s.iloc[-1])
+        ema50 = float(ema50_s.iloc[-1])
+        # EMA 20/50 crossover within the last 3 sessions
+        for k in range(max(1, len(closes) - 3), len(closes)):
+            if (float(ema20_s.iloc[k-1]) <= float(ema50_s.iloc[k-1])
+                    and float(ema20_s.iloc[k]) > float(ema50_s.iloc[k])):
+                ema_cross = "BULLISH"
+            elif (float(ema20_s.iloc[k-1]) >= float(ema50_s.iloc[k-1])
+                    and float(ema20_s.iloc[k]) < float(ema50_s.iloc[k])):
+                ema_cross = "BEARISH"
     else:
         rsi, ema20, ema50 = 50.0, spot, spot
 
@@ -2625,7 +2717,7 @@ def _live_stock_fo(client: ZerodhaClient, stock: Dict[str, Any]) -> Dict[str, An
         "buildup":       _classify_fut_buildup(change_pct, oi_change_pct),
         "expiry":        fut_inst["expiry"].strftime("%Y-%m-%d"),
     }
-    tech = {"rsi": rsi, "ema20": ema20, "ema50": ema50,
+    tech = {"rsi": rsi, "ema20": ema20, "ema50": ema50, "ema_cross": ema_cross,
             "vwap": vwap, "volume_ratio": volume_ratio}
     opt = {
         "pcr":         round(pcr, 2),
