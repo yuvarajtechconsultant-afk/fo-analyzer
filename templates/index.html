@@ -190,6 +190,21 @@
       font-weight: 700;
       letter-spacing: 0.5px;
     }
+
+    /* ===== Collapsible cards ===== */
+    .collapse-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 8px;
+      line-height: 1.4;
+      flex-shrink: 0;
+    }
+    .collapse-btn:hover { color: var(--text); border-color: var(--text-muted); }
+    .collapsible-card.collapsed .collapse-body { display: none; }
     .badge.high   { background: rgba(0,217,100,0.15); color: var(--green); }
     .badge.medium { background: rgba(255,215,0,0.15);  color: var(--yellow); }
     .badge.low    { background: rgba(110,118,129,0.2);  color: var(--text-muted); }
@@ -1369,7 +1384,8 @@
 
       <!-- Controls Bar -->
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:8px 12px;">
-        <span style="font-size:13px;font-weight:700;color:var(--text-bright);">Top 5 F&amp;O Stocks — CE / PE Buy Recommendations</span>
+        <span style="font-size:13px;font-weight:700;color:var(--text-bright);">Top 10 F&amp;O Stocks — CE / PE Buy Recommendations</span>
+        <button class="collapse-btn" id="sfp-toggle-all" onclick="toggleAllStockCards()">Collapse all</button>
         <span class="badge low" id="sfp-mode-badge" style="display:none;">MOCK DATA</span>
         <div style="flex:1;"></div>
         <span id="sfp-summary" style="font-size:11px;color:var(--text-muted);"></span>
@@ -1394,6 +1410,7 @@
         <b>Day momentum</b> (&gt;±0.75%, ±1).<br>
         <b>Method 1 — Moving Average:</b> price above both EMA20 &amp; EMA50 → Buy CE; below both → Buy PE.
         <b>EMA 20/50 Crossover:</b> EMA20 crossing above EMA50 → Buy CE (+2); crossing below → Buy PE (−2).
+        <b>Supertrend + EMA20 Cross:</b> close crossing above both Supertrend and EMA20 on the same candle → Buy CE (+2); crossing below both → Buy PE (−2).
         <b>Method 2 — Support &amp; Resistance:</b> break above resistance / below support on ≥1.2× average volume (±2).
         <b>Method 3 — Risk-Reward:</b> Risk = Entry − SL, Reward = Target − Entry; trade only if Reward ÷ Risk ≥ 2 (target +60%, SL −30% ⇒ 1:2).
         <b>Method 4 — Option Delta:</b> Δ ≈ 0.50 = ATM; CE Δ ≥ 0.60 stronger CE (+1); PE Δ ≤ −0.60 stronger PE (−1).
@@ -2935,8 +2952,6 @@ function renderAlgoBlock(d, idx) {
 
   const ce = d.ce;
   const pe = d.pe;
-  const ceAction = ce.action.includes('BUY') ? 'buy' : 'sell';
-  const peAction = pe.action.includes('BUY') ? 'buy' : 'sell';
 
   const buyPct  = d.buy_pct  || 0;
   const sellPct = d.sell_pct || 0;
@@ -2947,83 +2962,35 @@ function renderAlgoBlock(d, idx) {
   const reasons = (d.reasons || []).map(r => `<li>✓ ${r}</li>`).join('');
 
   return `
-  <div class="algo-index-block">
+  <div class="algo-index-block collapsible-card">
     <div class="algo-header">
       <span class="algo-index-name">${idx}</span>
       <span class="algo-signal-badge ${colorClass}">${d.signal}</span>
       <span class="algo-spot" style="color:${isBuy?'var(--green)':isSell?'var(--red)':'var(--text-bright)'}">₹${spot}</span>
+      <button class="collapse-btn" onclick="toggleCardCollapse(this)" title="Collapse / expand">▾</button>
     </div>
 
+    <div class="collapse-body">
     <!-- Indicator chips -->
     <div class="algo-indicators-row">
       <div class="algo-ind-chip">RSI <span class="${rsiColor}">${d.rsi}</span></div>
       <div class="algo-ind-chip">ATR <span class="neut">${d.atr}</span></div>
       <div class="algo-ind-chip">EMA 20/50 <span class="${d.ema_cross === 'BULL CROSS' ? 'up' : d.ema_cross === 'BEAR CROSS' ? 'down' : d.ema_cross === '20 > 50' ? 'up' : d.ema_cross === '20 < 50' ? 'down' : 'neut'}">${d.ema_cross || '—'}</span></div>
+      <div class="algo-ind-chip">ST+EMA20 <span class="${d.st_ema_cross === 'BULL CROSS' ? 'up' : d.st_ema_cross === 'BEAR CROSS' ? 'down' : 'neut'}">${d.st_ema_cross || '—'}</span></div>
       <div class="algo-ind-chip">Score Bull <span class="up">${d.score_buy}</span></div>
       <div class="algo-ind-chip">Score Bear <span class="down">${d.score_sell}</span></div>
       <div class="algo-ind-chip">Lot Size <span class="neut">${d.lot_size}</span></div>
       <div class="algo-ind-chip">Confidence <span class="${colorClass==='green'?'up':colorClass==='red'?'down':'neut'}">${d.confidence}%</span></div>
     </div>
 
-    <!-- CE / PE option cards -->
+    <!-- Option BUY recommendation (CE or PE only — no short/futures legs) -->
     <div class="algo-body">
-      <!-- CE Card -->
-      <div class="algo-option-card ce">
-        <div class="algo-opt-header">
-          <span class="algo-opt-title ce">CALL (CE)</span>
-          <span class="algo-opt-action ${ceAction}">${ce.action}</span>
-        </div>
-        <div class="algo-price-grid">
-          <div class="algo-price-item">
-            <label>Entry Price</label>
-            <div class="val entry">₹${ce.entry}</div>
-          </div>
-          <div class="algo-price-item">
-            <label>Target</label>
-            <div class="val target">₹${ce.target}</div>
-          </div>
-          <div class="algo-price-item">
-            <label>Stop Loss</label>
-            <div class="val sl">₹${ce.sl}</div>
-          </div>
-        </div>
-        <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${ce.strike}</strong> &nbsp;|&nbsp; Expiry: <strong style="color:var(--text-muted)">${ce.expiry||'—'}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">${ce.reward_risk}x</strong></div>
-        <div style="margin-top:10px;display:flex;gap:8px;">
-          <button class="algo-order-btn ${ceAction==='buy'?'buy':'sell'}"
-            onclick="placeAlgoOrder(${JSON.stringify(ce).replace(/"/g,'&quot;')})">
-            ${ce.txn === 'BUY' ? '🟢 BUY CE' : '🔴 SELL CE'} @ ₹${ce.entry}
-          </button>
-        </div>
-      </div>
-
-      <!-- PE Card -->
-      <div class="algo-option-card pe">
-        <div class="algo-opt-header">
-          <span class="algo-opt-title pe">PUT (PE)</span>
-          <span class="algo-opt-action ${peAction}">${pe.action}</span>
-        </div>
-        <div class="algo-price-grid">
-          <div class="algo-price-item">
-            <label>Entry Price</label>
-            <div class="val entry">₹${pe.entry}</div>
-          </div>
-          <div class="algo-price-item">
-            <label>Target</label>
-            <div class="val target">₹${pe.target}</div>
-          </div>
-          <div class="algo-price-item">
-            <label>Stop Loss</label>
-            <div class="val sl">₹${pe.sl}</div>
-          </div>
-        </div>
-        <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${pe.strike}</strong> &nbsp;|&nbsp; Expiry: <strong style="color:var(--text-muted)">${pe.expiry||'—'}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">${pe.reward_risk}x</strong></div>
-        <div style="margin-top:10px;display:flex;gap:8px;">
-          <button class="algo-order-btn ${peAction==='buy'?'buy':'sell'}"
-            onclick="placeAlgoOrder(${JSON.stringify(pe).replace(/"/g,'&quot;')})">
-            ${pe.txn === 'BUY' ? '🟢 BUY PE' : '🔴 SELL PE'} @ ₹${pe.entry}
-          </button>
-        </div>
-      </div>
+      ${renderAlgoLeg(ce, 'ce')}
+      ${renderAlgoLeg(pe, 'pe')}
+      ${!ce && !pe ? `
+      <div style="grid-column:1/-1;padding:18px;text-align:center;border:1px dashed rgba(255,215,0,0.35);border-radius:8px;background:rgba(255,215,0,0.04);color:var(--yellow);font-size:13px;">
+        ⏳ NEUTRAL — indicators are mixed. No CE/PE buy recommended; wait for a clearer setup.
+      </div>` : ''}
     </div>
 
     <!-- Score bar -->
@@ -3041,7 +3008,40 @@ function renderAlgoBlock(d, idx) {
       <div class="algo-reasons-title">Signal factors</div>
       <ul>${reasons}</ul>
     </div>
+    </div><!-- end collapse-body -->
   </div>`;
+}
+
+function renderAlgoLeg(leg, type) {
+  if (!leg) return '';
+  return `
+      <div class="algo-option-card ${type}" style="grid-column:1/-1;">
+        <div class="algo-opt-header">
+          <span class="algo-opt-title ${type}">${type === 'ce' ? 'CALL (CE)' : 'PUT (PE)'}</span>
+          <span class="algo-opt-action buy">${leg.action}</span>
+        </div>
+        <div class="algo-price-grid">
+          <div class="algo-price-item">
+            <label>Entry Price</label>
+            <div class="val entry">₹${leg.entry}</div>
+          </div>
+          <div class="algo-price-item">
+            <label>Target (+${Math.round((leg.target / leg.entry - 1) * 100)}%)</label>
+            <div class="val target">₹${leg.target}</div>
+          </div>
+          <div class="algo-price-item">
+            <label>Stop Loss (−${Math.round((1 - leg.sl / leg.entry) * 100)}%)</label>
+            <div class="val sl">₹${leg.sl}</div>
+          </div>
+        </div>
+        <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${leg.strike}</strong> &nbsp;|&nbsp; Expiry: <strong style="color:var(--text-muted)">${leg.expiry||'—'}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">1:${leg.reward_risk}</strong></div>
+        <div style="margin-top:10px;display:flex;gap:8px;">
+          <button class="algo-order-btn buy"
+            onclick="placeAlgoOrder(${JSON.stringify(leg).replace(/"/g,'&quot;')})">
+            🟢 ${leg.action} @ ₹${leg.entry}
+          </button>
+        </div>
+      </div>`;
 }
 
 // ============================================================
@@ -3676,7 +3676,29 @@ async function loadSmartOI() {
 }
 
 // ============================================================
-// Stock F&O Picks — Top 5 shares with BUY CE/PE recommendations
+// Collapsible cards (Stock F&O Picks + Algo)
+// ============================================================
+function toggleCardCollapse(btn) {
+  const card = btn.closest('.collapsible-card');
+  if (!card) return;
+  card.classList.toggle('collapsed');
+  btn.textContent = card.classList.contains('collapsed') ? '▸' : '▾';
+}
+
+function toggleAllStockCards() {
+  const cards = document.querySelectorAll('#sfp-cards .collapsible-card');
+  const btn = document.getElementById('sfp-toggle-all');
+  const collapse = btn.textContent.includes('Collapse');
+  cards.forEach(c => {
+    c.classList.toggle('collapsed', collapse);
+    const cb = c.querySelector('.collapse-btn');
+    if (cb) cb.textContent = collapse ? '▸' : '▾';
+  });
+  btn.textContent = collapse ? 'Expand all' : 'Collapse all';
+}
+
+// ============================================================
+// Stock F&O Picks — Top 10 shares with BUY CE/PE recommendations
 // ============================================================
 async function loadStockPicks() {
   const wrap = document.getElementById('sfp-cards');
@@ -3695,6 +3717,8 @@ async function loadStockPicks() {
       `<span class="num-yellow">${s.wait || 0} WAIT</span>`;
 
     wrap.innerHTML = d.stocks.map(renderStockPickCard).join('');
+    const tg = document.getElementById('sfp-toggle-all');
+    if (tg) tg.textContent = 'Collapse all';
   } catch(e) {
     console.error('Stock picks error:', e);
     wrap.innerHTML = '<div class="card" style="color:var(--red);">Failed to load stock F&amp;O picks. Try refreshing.</div>';
@@ -3751,13 +3775,16 @@ function renderStockPickCard(st) {
       </div>` : '';
 
   return `
-  <div class="signal-card ${cls}">
+  <div class="signal-card collapsible-card ${cls}">
     <div class="signal-header">
       <div>
         <span class="signal-index">${st.symbol}</span>
         <span style="font-size:11px;color:var(--text-muted);margin-left:6px;">${st.name}</span>
       </div>
-      <span class="signal-action ${cls}">${r.action}</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="signal-action ${cls}">${r.action}</span>
+        <button class="collapse-btn" onclick="toggleCardCollapse(this)" title="Collapse / expand">▾</button>
+      </div>
     </div>
 
     <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px;">
@@ -3765,6 +3792,7 @@ function renderStockPickCard(st) {
       <span class="change ${chCls}" style="font-size:12px;">${st.change >= 0 ? '+' : ''}${fmt(st.change, 2)} (${fmt(st.change_pct, 2)}%)</span>
     </div>
 
+    <div class="collapse-body">
     <div class="signal-grid" style="grid-template-columns:repeat(4,1fr);">
       <div class="signal-field"><label>Fut LTP</label><div class="val">${fmtNum(st.futures.ltp)}</div></div>
       <div class="signal-field"><label>Basis</label><div class="val" style="color:${st.futures.basis >= 0 ? 'var(--green)' : 'var(--red)'};">${st.futures.basis >= 0 ? '+' : ''}${fmt(st.futures.basis_pct, 2)}%</div></div>
@@ -3782,6 +3810,7 @@ function renderStockPickCard(st) {
     <div style="margin-top:10px;font-size:11px;color:var(--text-muted);line-height:1.6;">
       ${r.reasons.map(x => `• ${x}`).join('<br>')}
     </div>
+    </div><!-- end collapse-body -->
   </div>`;
 }
 </script>

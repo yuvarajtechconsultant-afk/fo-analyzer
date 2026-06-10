@@ -980,8 +980,10 @@ async def algo_signals():
             try:
                 st_data = calculate_supertrend(high, low, close, 10, 3)
                 st_dir  = st_data.get("direction", pd.Series([1]*len(df), index=df.index))
+                st_line = st_data.get("supertrend", pd.Series([float("nan")]*len(df), index=df.index))
             except Exception:
-                st_dir = pd.Series([1]*len(df), index=df.index)
+                st_dir  = pd.Series([1]*len(df), index=df.index)
+                st_line = pd.Series([float("nan")]*len(df), index=df.index)
 
             i = len(df) - 1
             atr_val   = float(atr.iloc[i]) if not np.isnan(atr.iloc[i]) else spot * 0.005
@@ -1010,6 +1012,22 @@ async def algo_signals():
                         and float(ema20.iloc[k]) < float(ema50.iloc[k])):
                     ema_cross_down = True
 
+            # Close crossing Supertrend AND EMA20 on the same candle
+            # (within the last 3 candles) — strong dual-confluence signal
+            st_ema_cross_up = st_ema_cross_down = False
+            for k in range(max(1, i - 2), i + 1):
+                c_now, c_prev = float(close.iloc[k]), float(close.iloc[k-1])
+                e_now, e_prev = float(ema20.iloc[k]), float(ema20.iloc[k-1])
+                s_now, s_prev = float(st_line.iloc[k]), float(st_line.iloc[k-1])
+                if math.isnan(s_now) or math.isnan(s_prev):
+                    continue
+                if (c_prev <= s_prev and c_now > s_now
+                        and c_prev <= e_prev and c_now > e_now):
+                    st_ema_cross_up = True
+                if (c_prev >= s_prev and c_now < s_now
+                        and c_prev >= e_prev and c_now < e_now):
+                    st_ema_cross_down = True
+
             # ── Score system ─────────────────────────────────────
             score_buy = score_sell = 0
             reasons_buy = []
@@ -1026,6 +1044,12 @@ async def algo_signals():
                 score_buy += 2; reasons_buy.append("EMA20 crossed above EMA50 (bullish crossover)")
             if ema_cross_down:
                 score_sell += 2; reasons_sell.append("EMA20 crossed below EMA50 (bearish crossover)")
+
+            # 1c. Close crossed Supertrend + EMA20 together — BUY above, SELL below
+            if st_ema_cross_up:
+                score_buy += 3; reasons_buy.append("Close crossed above Supertrend & EMA20 on the same candle")
+            if st_ema_cross_down:
+                score_sell += 3; reasons_sell.append("Close crossed below Supertrend & EMA20 on the same candle")
 
             # 2. Price vs EMA200
             if spot > e200:
@@ -1110,104 +1134,56 @@ async def algo_signals():
                 if atm_row:
                     live_ce_ltp = float((atm_row.get("CE") or {}).get("ltp") or 0)
                     live_pe_ltp = float((atm_row.get("PE") or {}).get("ltp") or 0)
-                # OTM 2-strike away for the short leg
-                otm_buy_strike  = atm_strike - strike_gap * 2  # OTM PE for STRONG BUY short leg
-                otm_sell_strike = atm_strike + strike_gap * 2  # OTM CE for STRONG SELL short leg
-                otm_buy_row  = next((r for r in chain_data if r.get("strike") == otm_buy_strike), None)
-                otm_sell_row = next((r for r in chain_data if r.get("strike") == otm_sell_strike), None)
-                live_otm_pe_ltp = float((otm_buy_row.get("PE")  or {}).get("ltp") or 0) if otm_buy_row  else 0
-                live_otm_ce_ltp = float((otm_sell_row.get("CE") or {}).get("ltp") or 0) if otm_sell_row else 0
             except Exception:
-                live_otm_pe_ltp = live_otm_ce_ltp = 0
+                pass
 
             def _est_ce(mult=0.008, atr_m=0.5):
                 """Estimated ATM CE premium when live data unavailable."""
-                ltp = live_ce_ltp if live_ce_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
-                return ltp
+                return live_ce_ltp if live_ce_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
 
             def _est_pe(mult=0.008, atr_m=0.5):
-                ltp = live_pe_ltp if live_pe_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
-                return ltp
+                return live_pe_ltp if live_pe_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
 
-            def _est_otm_pe(mult=0.005, atr_m=0.3):
-                ltp = live_otm_pe_ltp if live_otm_pe_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
-                return ltp
+            def _make_leg(opt_type: str, premium: float, t_mult: float, sl_mult: float) -> Dict[str, Any]:
+                """Build an option BUY leg. Target/SL multiples keep Reward ÷ Risk = 2."""
+                premium = round(premium, 1)
+                target  = round(premium * t_mult, 1)
+                sl      = round(premium * sl_mult, 1)
+                return {
+                    "strike": atm_strike,
+                    "action": f"BUY {opt_type}",
+                    "txn": "BUY",
+                    "entry": premium,
+                    "target": target,
+                    "sl": sl,
+                    "reward_risk": round((target - premium) / max(premium - sl, 0.1), 2),
+                    "tradingsymbol": _build_nfo_symbol(index, expiry_dt, atm_strike, opt_type),
+                    "exchange": exchange,
+                    "lot_size": lot_size,
+                    "expiry": expiry_dt.strftime("%d %b %Y"),
+                }
 
-            def _est_otm_ce(mult=0.005, atr_m=0.3):
-                ltp = live_otm_ce_ltp if live_otm_ce_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
-                return ltp
+            # ── Recommendation: option BUYING only (CE or PE, ATM) ──
+            # No short/sell legs. Targets follow the 1:2 risk-reward rule:
+            #   STRONG: target +60% / SL -30%   → RR = 2.0
+            #   MILD:   target +40% / SL -20%   → RR = 2.0
+            ce_leg = pe_leg = None
 
             if score_buy >= 8 and score_buy > score_sell + 2:
-                direction = "STRONG BUY"
-                color = "green"
-                reasons = reasons_buy
-                # Primary: BUY ATM CE
-                ce_strike  = atm_strike
-                ce_premium = round(_est_ce(), 1)
-                ce_target  = round(ce_premium * 1.6, 1)
-                ce_sl      = round(ce_premium * 0.55, 1)
-                # Secondary: SELL OTM PE (collect premium, limited risk if market stays up)
-                pe_strike  = atm_strike - strike_gap * 2
-                pe_premium = round(_est_otm_pe(), 1)
-                pe_target  = round(pe_premium * 0.3, 1)   # target: decay to 30%
-                pe_sl      = round(pe_premium * 1.5, 1)   # sl: if PE expands 50%
-
+                direction, color, reasons = "STRONG BUY", "green", reasons_buy
+                ce_leg = _make_leg("CE", _est_ce(), 1.6, 0.7)
             elif score_sell >= 8 and score_sell > score_buy + 2:
-                direction = "STRONG SELL"
-                color = "red"
-                reasons = reasons_sell
-                # Primary: BUY ATM PE
-                pe_strike  = atm_strike
-                pe_premium = round(_est_pe(), 1)
-                pe_target  = round(pe_premium * 1.6, 1)
-                pe_sl      = round(pe_premium * 0.55, 1)
-                # Secondary: SELL OTM CE (collect premium, limited risk if market stays down)
-                ce_strike  = atm_strike + strike_gap * 2
-                ce_premium = round(_est_otm_ce(), 1)
-                ce_target  = round(ce_premium * 0.3, 1)   # target: decay to 30%
-                ce_sl      = round(ce_premium * 1.5, 1)   # sl: if CE expands 50%
-
+                direction, color, reasons = "STRONG SELL", "red", reasons_sell
+                pe_leg = _make_leg("PE", _est_pe(), 1.6, 0.7)
             elif score_buy > score_sell:
-                direction = "MILD BUY"
-                color = "blue"
-                reasons = reasons_buy
-                ce_strike  = atm_strike
-                ce_premium = round(_est_ce(0.007, 0.4), 1)
-                ce_target  = round(ce_premium * 1.4, 1)
-                ce_sl      = round(ce_premium * 0.6, 1)
-                pe_strike  = atm_strike - strike_gap
-                pe_premium = round(_est_otm_pe(0.004, 0.2), 1)
-                pe_target  = round(pe_premium * 0.35, 1)
-                pe_sl      = round(pe_premium * 1.4, 1)
-
+                direction, color, reasons = "MILD BUY", "blue", reasons_buy
+                ce_leg = _make_leg("CE", _est_ce(0.007, 0.4), 1.4, 0.8)
             elif score_sell > score_buy:
-                direction = "MILD SELL"
-                color = "orange"
-                reasons = reasons_sell
-                pe_strike  = atm_strike
-                pe_premium = round(_est_pe(0.007, 0.4), 1)
-                pe_target  = round(pe_premium * 1.4, 1)
-                pe_sl      = round(pe_premium * 0.6, 1)
-                ce_strike  = atm_strike + strike_gap
-                ce_premium = round(_est_otm_ce(0.004, 0.2), 1)
-                ce_target  = round(ce_premium * 0.35, 1)
-                ce_sl      = round(ce_premium * 1.4, 1)
-
+                direction, color, reasons = "MILD SELL", "orange", reasons_sell
+                pe_leg = _make_leg("PE", _est_pe(0.007, 0.4), 1.4, 0.8)
             else:
-                direction = "NEUTRAL"
-                color = "yellow"
-                reasons = ["Indicators are mixed — wait for clearer setup"]
-                ce_strike  = atm_strike
-                pe_strike  = atm_strike
-                ce_premium = round(_est_ce(0.006, 0.3), 1)
-                pe_premium = round(_est_pe(0.006, 0.3), 1)
-                ce_target  = round(ce_premium * 1.3, 1)
-                pe_target  = round(pe_premium * 1.3, 1)
-                ce_sl      = round(ce_premium * 0.65, 1)
-                pe_sl      = round(pe_premium * 0.65, 1)
-
-            is_buy_ce  = direction in ("STRONG BUY",  "MILD BUY")
-            is_buy_pe  = direction in ("STRONG SELL", "MILD SELL")
+                direction, color = "NEUTRAL", "yellow"
+                reasons = ["Indicators are mixed — wait for a clearer setup; no option buy recommended"]
 
             results[index] = sanitize({
                 "index": index,
@@ -1224,35 +1200,14 @@ async def algo_signals():
                 "ema_cross": ("BULL CROSS" if ema_cross_up
                               else "BEAR CROSS" if ema_cross_down
                               else "20 > 50" if e20 > e50 else "20 < 50"),
+                "st_ema_cross": ("BULL CROSS" if st_ema_cross_up
+                                 else "BEAR CROSS" if st_ema_cross_down
+                                 else "—"),
                 "lot_size": lot_size,
                 "reasons": reasons[:6],
                 "live_premiums": live_ce_ltp > 0 or live_pe_ltp > 0,
-                "ce": {
-                    "strike": ce_strike,
-                    "action": "BUY CE" if is_buy_ce else "SELL CE",
-                    "txn": "BUY" if is_buy_ce else "SELL",
-                    "entry": ce_premium,
-                    "target": ce_target,
-                    "sl": ce_sl,
-                    "reward_risk": round(abs(ce_target - ce_premium) / max(abs(ce_premium - ce_sl), 0.1), 2),
-                    "tradingsymbol": _build_nfo_symbol(index, expiry_dt, ce_strike, "CE"),
-                    "exchange": exchange,
-                    "lot_size": lot_size,
-                    "expiry": expiry_dt.strftime("%d %b %Y"),
-                },
-                "pe": {
-                    "strike": pe_strike,
-                    "action": "BUY PE" if is_buy_pe else "SELL PE",
-                    "txn": "BUY" if is_buy_pe else "SELL",
-                    "entry": pe_premium,
-                    "target": pe_target,
-                    "sl": pe_sl,
-                    "reward_risk": round(abs(pe_target - pe_premium) / max(abs(pe_premium - pe_sl), 0.1), 2),
-                    "tradingsymbol": _build_nfo_symbol(index, expiry_dt, pe_strike, "PE"),
-                    "exchange": exchange,
-                    "lot_size": lot_size,
-                    "expiry": expiry_dt.strftime("%d %b %Y"),
-                },
+                "ce": ce_leg,
+                "pe": pe_leg,
                 "timestamp": datetime.now().isoformat(),
             })
 
@@ -2194,11 +2149,16 @@ async def smart_oi_timeseries(index: str, expiry: Optional[str] = None, interval
 # ---------------------------------------------------------------------------
 
 TOP_FO_STOCKS = [
-    {"symbol": "RELIANCE",  "name": "Reliance Industries", "lot_size": 500, "base_price": 1450},
-    {"symbol": "HDFCBANK",  "name": "HDFC Bank",           "lot_size": 550, "base_price": 990},
-    {"symbol": "ICICIBANK", "name": "ICICI Bank",          "lot_size": 700, "base_price": 1400},
-    {"symbol": "INFY",      "name": "Infosys",             "lot_size": 400, "base_price": 1600},
-    {"symbol": "TCS",       "name": "TCS",                 "lot_size": 175, "base_price": 3500},
+    {"symbol": "RELIANCE",   "name": "Reliance Industries", "lot_size": 500, "base_price": 1450},
+    {"symbol": "HDFCBANK",   "name": "HDFC Bank",           "lot_size": 550, "base_price": 990},
+    {"symbol": "ICICIBANK",  "name": "ICICI Bank",          "lot_size": 700, "base_price": 1400},
+    {"symbol": "INFY",       "name": "Infosys",             "lot_size": 400, "base_price": 1600},
+    {"symbol": "TCS",        "name": "TCS",                 "lot_size": 175, "base_price": 3500},
+    {"symbol": "SBIN",       "name": "State Bank of India", "lot_size": 750, "base_price": 870},
+    {"symbol": "BHARTIARTL", "name": "Bharti Airtel",       "lot_size": 475, "base_price": 1850},
+    {"symbol": "AXISBANK",   "name": "Axis Bank",           "lot_size": 625, "base_price": 1150},
+    {"symbol": "KOTAKBANK",  "name": "Kotak Mahindra Bank", "lot_size": 400, "base_price": 2100},
+    {"symbol": "LT",         "name": "Larsen & Toubro",     "lot_size": 150, "base_price": 3650},
 ]
 
 
@@ -2294,6 +2254,15 @@ def _build_stock_fo_result(
         score -= 2
         reasons.append("EMA20 crossed below EMA50 (bearish crossover)")
 
+    # 1c. Close crossed Supertrend + EMA20 together — BUY above, SELL below
+    st_ema_cross = tech.get("st_ema_cross")
+    if st_ema_cross == "BULLISH":
+        score += 2
+        reasons.append("Close crossed above Supertrend & EMA20 on the same candle")
+    elif st_ema_cross == "BEARISH":
+        score -= 2
+        reasons.append("Close crossed below Supertrend & EMA20 on the same candle")
+
     # 2. RSI momentum
     if rsi >= 60:
         score += 1
@@ -2363,6 +2332,19 @@ def _build_stock_fo_result(
                    + ("crossed above recently" if ema_cross == "BULLISH"
                       else "crossed below recently" if ema_cross == "BEARISH"
                       else "no recent cross")),
+    })
+
+    # Supertrend + EMA20 combined cross method
+    st_level = tech.get("supertrend")
+    strategies.append({
+        "method": "Supertrend + EMA20 Cross",
+        "signal": "BUY CE" if st_ema_cross == "BULLISH"
+                  else "BUY PE" if st_ema_cross == "BEARISH" else "NEUTRAL",
+        "detail": ((f"ST {st_level:,.1f} · " if st_level else "")
+                   + f"EMA20 {ema20:,.1f} · "
+                   + ("close crossed above both together" if st_ema_cross == "BULLISH"
+                      else "close crossed below both together" if st_ema_cross == "BEARISH"
+                      else "no combined cross")),
     })
 
     # Method 2: Support & Resistance breakout with volume
@@ -2454,7 +2436,7 @@ def _build_stock_fo_result(
     if entry and not rr_ok:
         action, confidence, opt_type = "WAIT", "LOW", None
         reasons.append(f"Risk-reward {rr_ratio:.1f} below 1:2 minimum — trade skipped")
-    strategies.insert(3, {
+    strategies.insert(4, {
         "method": "Risk-Reward ≥ 1:2",
         "signal": ("PASS" if rr_ok else "FAIL") if entry else "—",
         "detail": (f"Risk ₹{risk:,.2f} · Reward ₹{reward:,.2f} · R:R 1:{rr_ratio:g}"
@@ -2528,6 +2510,17 @@ def _mock_stock_fo(stock: Dict[str, Any]) -> Dict[str, Any]:
     else:
         ema_cross = None
 
+    # Supertrend level + combined Supertrend/EMA20 same-candle cross (rarer)
+    st_gap = 0.012 + float(rng.random()) * 0.01
+    supertrend = round(spot * (1 - st_gap), 2) if trend_bias >= 0 else round(spot * (1 + st_gap), 2)
+    st_roll = float(rng.random())
+    if trend_bias > 1.0 and st_roll < 0.25:
+        st_ema_cross = "BULLISH"
+    elif trend_bias < -1.0 and st_roll < 0.25:
+        st_ema_cross = "BEARISH"
+    else:
+        st_ema_cross = None
+
     # Futures
     fut_oi        = int(rng.integers(2_000_000, 30_000_000))
     oi_change_pct = float(rng.normal(change_pct * 1.6, 2.5))
@@ -2568,6 +2561,7 @@ def _mock_stock_fo(stock: Dict[str, Any]) -> Dict[str, Any]:
         "expiry":        expiry,
     }
     tech = {"rsi": rsi, "ema20": ema20, "ema50": ema50, "ema_cross": ema_cross,
+            "supertrend": supertrend, "st_ema_cross": st_ema_cross,
             "vwap": vwap, "volume_ratio": volume_ratio}
     opt = {
         "pcr":         round(pcr, 2),
@@ -2624,12 +2618,16 @@ def _live_stock_fo(client: ZerodhaClient, stock: Dict[str, Any]) -> Dict[str, An
     basis_pct = (basis / spot * 100) if spot else 0
 
     # ── Technicals from daily futures candles ────────────────
-    from analysis.technical import calculate_ema, calculate_rsi
+    from analysis.technical import calculate_ema, calculate_rsi, calculate_supertrend
     candles = client.get_historical_data(
         fut_inst["instrument_token"], interval="day", days=120
     )
     closes = pd.Series([c["close"] for c in candles], dtype=float)
+    highs  = pd.Series([c["high"]  for c in candles], dtype=float)
+    lows   = pd.Series([c["low"]   for c in candles], dtype=float)
     ema_cross = None
+    st_ema_cross = None
+    supertrend = None
     if len(closes) >= 20:
         rsi      = float(calculate_rsi(closes, 14).iloc[-1])
         ema20_s  = calculate_ema(closes, 20)
@@ -2644,6 +2642,24 @@ def _live_stock_fo(client: ZerodhaClient, stock: Dict[str, Any]) -> Dict[str, An
             elif (float(ema20_s.iloc[k-1]) >= float(ema50_s.iloc[k-1])
                     and float(ema20_s.iloc[k]) < float(ema50_s.iloc[k])):
                 ema_cross = "BEARISH"
+        # Close crossing Supertrend AND EMA20 on the same candle (last 3 sessions)
+        try:
+            st_s = calculate_supertrend(highs, lows, closes, 10, 3)["supertrend"]
+            supertrend = float(st_s.iloc[-1])
+            for k in range(max(1, len(closes) - 3), len(closes)):
+                c_now, c_prev = float(closes.iloc[k]), float(closes.iloc[k-1])
+                e_now, e_prev = float(ema20_s.iloc[k]), float(ema20_s.iloc[k-1])
+                s_now, s_prev = float(st_s.iloc[k]), float(st_s.iloc[k-1])
+                if math.isnan(s_now) or math.isnan(s_prev):
+                    continue
+                if (c_prev <= s_prev and c_now > s_now
+                        and c_prev <= e_prev and c_now > e_now):
+                    st_ema_cross = "BULLISH"
+                elif (c_prev >= s_prev and c_now < s_now
+                        and c_prev >= e_prev and c_now < e_now):
+                    st_ema_cross = "BEARISH"
+        except Exception as st_err:
+            logger.warning("Supertrend calc failed for %s: %s", symbol, st_err)
     else:
         rsi, ema20, ema50 = 50.0, spot, spot
 
@@ -2718,6 +2734,7 @@ def _live_stock_fo(client: ZerodhaClient, stock: Dict[str, Any]) -> Dict[str, An
         "expiry":        fut_inst["expiry"].strftime("%Y-%m-%d"),
     }
     tech = {"rsi": rsi, "ema20": ema20, "ema50": ema50, "ema_cross": ema_cross,
+            "supertrend": supertrend, "st_ema_cross": st_ema_cross,
             "vwap": vwap, "volume_ratio": volume_ratio}
     opt = {
         "pcr":         round(pcr, 2),
