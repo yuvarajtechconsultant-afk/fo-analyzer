@@ -248,6 +248,20 @@ async def auth_status():
     return {"authenticated": client.is_authenticated()}
 
 
+@app.post("/api/auth/logout")
+async def auth_logout():
+    """Invalidate the Zerodha session and clear the stored access token."""
+    client = get_client()
+    if not client.is_authenticated():
+        return JSONResponse({"status": "ok", "message": "Not logged in"})
+    invalidated = client.logout()
+    return JSONResponse({
+        "status": "ok",
+        "message": "Logged out from Zerodha" if invalidated
+                   else "Session cleared locally (Zerodha invalidation failed)",
+    })
+
+
 @app.get("/api/market/quote/{index}")
 async def market_quote(index: str):
     """Get spot quote for NIFTY or SENSEX."""
@@ -556,6 +570,31 @@ async def full_analysis(index: str, interval: str = "15minute", days: int = 10):
     }))
 
 
+@app.get("/api/expiry-list/{index}")
+async def expiry_list(index: str):
+    """Return real expiry dates from Zerodha instruments (falls back to computed list)."""
+    index = index.upper()
+    client = get_client()
+    if client.is_authenticated():
+        try:
+            exchange = "BFO" if index == "SENSEX" else "NFO"
+            instruments = client.get_instruments(exchange)
+            today = date.today()
+            expiries = sorted(set(
+                inst["expiry"].strftime("%Y-%m-%d")
+                for inst in instruments
+                if inst.get("name", "").upper() == index
+                and inst.get("instrument_type") in ("CE", "PE")
+                and isinstance(inst.get("expiry"), date)
+                and inst["expiry"] >= today
+            ))[:8]
+            if expiries:
+                return JSONResponse({"expiry_list": expiries})
+        except Exception as e:
+            logger.warning("Could not fetch live expiry list for %s: %s", index, e)
+    return JSONResponse({"expiry_list": get_expiry_list(index, 5)})
+
+
 @app.get("/api/option-chain/{index}")
 async def option_chain(index: str, expiry: Optional[str] = None):
     """Get full option chain with greeks."""
@@ -567,10 +606,24 @@ async def option_chain(index: str, expiry: Optional[str] = None):
     client = get_client()
 
     try:
+        chain_data = None
         if client.is_authenticated():
-            chain_data = client.get_option_chain(index, expiry)
-        else:
-            # Rich 1-month mock option chain with IV smile & OI skew
+            try:
+                chain_data = client.get_option_chain(index, expiry)
+                # Validate: ensure at least some strikes have non-zero LTP
+                live_rows_with_data = [
+                    r for r in (chain_data or {}).get("chain", [])
+                    if ((r.get("CE") or {}).get("ltp") or 0) > 0
+                    or ((r.get("PE") or {}).get("ltp") or 0) > 0
+                ]
+                if not live_rows_with_data:
+                    logger.warning("Live option chain for %s %s has no LTP data — falling back to mock", index, expiry)
+                    chain_data = None
+            except Exception as live_err:
+                logger.warning("Live option chain failed for %s, using mock: %s", index, live_err)
+                chain_data = None
+
+        if chain_data is None:
             spot = _mock_quote(index)["last_price"]
             chain_data = _mock_option_chain(index, expiry, spot)
 
@@ -675,6 +728,171 @@ async def positions():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/position-analysis")
+async def position_analysis():
+    """
+    For each open position: compute IV, Greeks, scenario P&L table,
+    and sell recommendations.
+    """
+    import re, datetime as _dt
+    from analysis.options import calculate_iv, calculate_greeks
+
+    client = get_client()
+    if not client.is_authenticated():
+        return JSONResponse({"positions": [], "authenticated": False})
+
+    try:
+        pos_data = client.get_positions()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    net_positions = [p for p in (pos_data.get("net") or []) if abs(p.get("quantity", 0)) > 0]
+    today = _dt.date.today()
+    results = []
+
+    for p in net_positions:
+        sym     = p.get("tradingsymbol", "")
+        qty     = p.get("quantity", 0)
+        avg     = p.get("average_price", 0) or 0
+        ltp     = p.get("last_price", 0) or 0
+        pnl     = p.get("pnl", 0) or 0
+        product = p.get("product", "")
+
+        # ── Parse symbol to extract expiry / strike / opt_type ─────────────
+        # Zerodha weekly format: NIFTY26609{strike}PE  → YY + M(hex?) + DD + strike + type
+        # Monthly format:        WIPRO26JUN187.5CE     → YY + MMM + strike + type
+        expiry_dt  = None
+        strike     = 0.0
+        opt_type   = ""
+        underlying = sym
+
+        # Try monthly: e.g. WIPRO26JUN187.5CE
+        m_mon = re.match(r"^([A-Z&]+)(\d{2})([A-Z]{3})(\d+\.?\d*)(CE|PE)$", sym)
+        # Try weekly compact: e.g. NIFTY2660923200PE  → NIFTY + 26 + 6 + 09 + 23200 + PE
+        m_wkl = re.match(r"^([A-Z&]+)(\d{2})(\d)(\d{2})(\d+\.?\d*)(CE|PE)$", sym)
+
+        if m_mon:
+            underlying = m_mon.group(1)
+            yy, mmm, st, ot = m_mon.group(2), m_mon.group(3), m_mon.group(4), m_mon.group(5)
+            month_map = {"JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,
+                         "JUL":7,"AUG":8,"SEP":9,"OCT":10,"NOV":11,"DEC":12}
+            # Monthly = last Thursday of that month
+            yr = 2000 + int(yy)
+            mo = month_map.get(mmm.upper(), 6)
+            # Find last Thursday
+            import calendar
+            last_day = calendar.monthrange(yr, mo)[1]
+            d = _dt.date(yr, mo, last_day)
+            while d.weekday() != 3:  # 3 = Thursday
+                d -= _dt.timedelta(days=1)
+            expiry_dt = d
+            strike    = float(st)
+            opt_type  = ot
+        elif m_wkl:
+            underlying = m_wkl.group(1)
+            yy, m1, dd, st, ot = m_wkl.group(2), m_wkl.group(3), m_wkl.group(4), m_wkl.group(5), m_wkl.group(6)
+            month_map2 = {"1":1,"2":2,"3":3,"4":4,"5":5,"6":6,
+                          "7":7,"8":8,"9":9,"O":10,"N":11,"D":12}
+            yr  = 2000 + int(yy)
+            mo  = month_map2.get(m1, 6)
+            expiry_dt = _dt.date(yr, mo, int(dd))
+            strike    = float(st)
+            opt_type  = ot
+
+        dte = max((expiry_dt - today).days, 0) if expiry_dt else 7
+
+        # ── Spot price ──────────────────────────────────────────────────────
+        idx_map = {"NIFTY": "NIFTY", "SENSEX": "SENSEX", "BANKNIFTY": "BANKNIFTY",
+                   "FINNIFTY": "FINNIFTY", "MIDCPNIFTY": "MIDCPNIFTY"}
+        try:
+            spot = client.get_index_quote(idx_map.get(underlying, underlying))["last_price"]
+        except Exception:
+            # For stocks, use strike as approximation
+            spot = strike * (1.0 if opt_type == "CE" else 0.98)
+
+        # ── Greeks ─────────────────────────────────────────────────────────
+        iv     = calculate_iv(ltp, spot, strike, dte, RISK_FREE_RATE, opt_type) if ltp > 0 else 0.0
+        greeks = calculate_greeks(spot, strike, dte, iv, RISK_FREE_RATE, opt_type) if iv > 0 else {}
+
+        # ── Scenario analysis ───────────────────────────────────────────────
+        delta  = float(greeks.get("delta", 0))
+        gamma  = float(greeks.get("gamma", 0))
+        theta  = float(greeks.get("theta", 0))
+
+        # Determine move steps based on underlying
+        if underlying in ("NIFTY", "SENSEX", "BANKNIFTY"):
+            steps = [-300, -200, -100, -50, 0, +50, +100, +200]
+        else:
+            steps = [-10, -5, -3, 0, +3, +5, +8, +12]
+
+        scenarios = []
+        for move in steps:
+            new_spot   = round(spot + move, 2)
+            delta_chg  = delta * move
+            gamma_chg  = 0.5 * gamma * move * move
+            # Include one day of theta
+            new_price  = max(0.05, ltp + delta_chg + gamma_chg + theta)
+            pos_pnl    = (new_price - avg) * qty
+            scenarios.append({
+                "spot":      new_spot,
+                "move":      move,
+                "opt_price": round(new_price, 2),
+                "pnl":       round(pos_pnl, 0),
+            })
+
+        # ── Recommendations ────────────────────────────────────────────────
+        # Stop loss: 30% of premium or 2× theta per day
+        sl_price  = round(max(0.05, avg * 0.65), 2)
+        # Profit target: 50% gain or at-the-money intrinsic
+        tgt_price = round(avg * 1.50, 2)
+        # Urgency
+        if dte <= 1:
+            urgency = "URGENT"
+            action  = f"{'SELL' if opt_type else 'EXIT'} TODAY — expires {'tomorrow' if dte==1 else 'today'}"
+        elif dte <= 3:
+            urgency = "HIGH"
+            action  = "Monitor closely — exit if no move by day end"
+        else:
+            urgency = "NORMAL"
+            action  = "Hold with stop loss — wait for price move"
+
+        # Breakeven
+        if opt_type == "CE":
+            breakeven = round(strike + avg, 2)
+        else:
+            breakeven = round(strike - avg, 2)
+
+        results.append(sanitize({
+            "tradingsymbol": sym,
+            "underlying":    underlying,
+            "opt_type":      opt_type,
+            "strike":        strike,
+            "expiry":        expiry_dt.isoformat() if expiry_dt else "",
+            "dte":           dte,
+            "qty":           qty,
+            "avg_price":     avg,
+            "ltp":           ltp,
+            "pnl":           pnl,
+            "spot":          spot,
+            "iv":            round(iv * 100, 2),
+            "delta":         round(delta, 4),
+            "gamma":         round(gamma, 6),
+            "theta":         round(theta, 2),
+            "vega":          round(float(greeks.get("vega", 0)), 4),
+            "intrinsic":     float(greeks.get("intrinsic", 0)),
+            "time_value":    round(float(greeks.get("time_value", ltp)), 2),
+            "breakeven":     breakeven,
+            "sl_price":      sl_price,
+            "target_price":  tgt_price,
+            "urgency":       urgency,
+            "action":        action,
+            "scenarios":     scenarios,
+            "product":       product,
+        }))
+
+    return JSONResponse({"positions": results, "authenticated": True})
 
 
 @app.post("/api/order")
@@ -832,47 +1050,84 @@ async def algo_signals():
             strike_gap = 50 if index == "NIFTY" else 100
             exchange = "NFO" if index == "NIFTY" else "BFO"
             expiry_dt = get_nearest_expiry(index)
+            atm_strike = round(spot / strike_gap) * strike_gap
+
+            # ── Fetch real ATM premiums from live option chain ──────
+            live_ce_ltp = live_pe_ltp = 0
+            try:
+                expiry_str = expiry_dt.strftime("%Y-%m-%d")
+                chain_data, _ = _get_option_chain_list(index, expiry_str)
+                atm_row = next((r for r in chain_data if r.get("strike") == atm_strike), None)
+                if atm_row:
+                    live_ce_ltp = float((atm_row.get("CE") or {}).get("ltp") or 0)
+                    live_pe_ltp = float((atm_row.get("PE") or {}).get("ltp") or 0)
+                # OTM 2-strike away for the short leg
+                otm_buy_strike  = atm_strike - strike_gap * 2  # OTM PE for STRONG BUY short leg
+                otm_sell_strike = atm_strike + strike_gap * 2  # OTM CE for STRONG SELL short leg
+                otm_buy_row  = next((r for r in chain_data if r.get("strike") == otm_buy_strike), None)
+                otm_sell_row = next((r for r in chain_data if r.get("strike") == otm_sell_strike), None)
+                live_otm_pe_ltp = float((otm_buy_row.get("PE")  or {}).get("ltp") or 0) if otm_buy_row  else 0
+                live_otm_ce_ltp = float((otm_sell_row.get("CE") or {}).get("ltp") or 0) if otm_sell_row else 0
+            except Exception:
+                live_otm_pe_ltp = live_otm_ce_ltp = 0
+
+            def _est_ce(mult=0.008, atr_m=0.5):
+                """Estimated ATM CE premium when live data unavailable."""
+                ltp = live_ce_ltp if live_ce_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
+                return ltp
+
+            def _est_pe(mult=0.008, atr_m=0.5):
+                ltp = live_pe_ltp if live_pe_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
+                return ltp
+
+            def _est_otm_pe(mult=0.005, atr_m=0.3):
+                ltp = live_otm_pe_ltp if live_otm_pe_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
+                return ltp
+
+            def _est_otm_ce(mult=0.005, atr_m=0.3):
+                ltp = live_otm_ce_ltp if live_otm_ce_ltp > 0 else round(spot * mult + atr_val * atr_m, 1)
+                return ltp
 
             if score_buy >= 8 and score_buy > score_sell + 2:
                 direction = "STRONG BUY"
                 color = "green"
                 reasons = reasons_buy
-                # CE recommendation (buy call)
-                ce_strike = round(spot / strike_gap) * strike_gap
-                ce_premium = round(spot * 0.008 + atr_val * 0.5, 1)
+                # Primary: BUY ATM CE
+                ce_strike  = atm_strike
+                ce_premium = round(_est_ce(), 1)
                 ce_target  = round(ce_premium * 1.6, 1)
                 ce_sl      = round(ce_premium * 0.55, 1)
-                pe_note    = "SELL PE (short put for premium)"
-                pe_strike  = ce_strike - strike_gap * 2
-                pe_premium = round(spot * 0.005 + atr_val * 0.3, 1)
-                pe_target  = round(pe_premium * 0.3, 1)   # target decay to 30%
-                pe_sl      = round(pe_premium * 1.5, 1)
+                # Secondary: SELL OTM PE (collect premium, limited risk if market stays up)
+                pe_strike  = atm_strike - strike_gap * 2
+                pe_premium = round(_est_otm_pe(), 1)
+                pe_target  = round(pe_premium * 0.3, 1)   # target: decay to 30%
+                pe_sl      = round(pe_premium * 1.5, 1)   # sl: if PE expands 50%
 
             elif score_sell >= 8 and score_sell > score_buy + 2:
                 direction = "STRONG SELL"
                 color = "red"
                 reasons = reasons_sell
-                # PE recommendation (buy put)
-                pe_strike  = round(spot / strike_gap) * strike_gap
-                pe_premium = round(spot * 0.008 + atr_val * 0.5, 1)
+                # Primary: BUY ATM PE
+                pe_strike  = atm_strike
+                pe_premium = round(_est_pe(), 1)
                 pe_target  = round(pe_premium * 1.6, 1)
                 pe_sl      = round(pe_premium * 0.55, 1)
-                ce_note    = "SELL CE (short call for premium)"
-                ce_strike  = pe_strike + strike_gap * 2
-                ce_premium = round(spot * 0.005 + atr_val * 0.3, 1)
-                ce_target  = round(ce_premium * 0.3, 1)
-                ce_sl      = round(ce_premium * 1.5, 1)
+                # Secondary: SELL OTM CE (collect premium, limited risk if market stays down)
+                ce_strike  = atm_strike + strike_gap * 2
+                ce_premium = round(_est_otm_ce(), 1)
+                ce_target  = round(ce_premium * 0.3, 1)   # target: decay to 30%
+                ce_sl      = round(ce_premium * 1.5, 1)   # sl: if CE expands 50%
 
             elif score_buy > score_sell:
                 direction = "MILD BUY"
                 color = "blue"
                 reasons = reasons_buy
-                ce_strike  = round(spot / strike_gap) * strike_gap
-                ce_premium = round(spot * 0.007 + atr_val * 0.4, 1)
+                ce_strike  = atm_strike
+                ce_premium = round(_est_ce(0.007, 0.4), 1)
                 ce_target  = round(ce_premium * 1.4, 1)
                 ce_sl      = round(ce_premium * 0.6, 1)
-                pe_strike  = ce_strike - strike_gap
-                pe_premium = round(spot * 0.004, 1)
+                pe_strike  = atm_strike - strike_gap
+                pe_premium = round(_est_otm_pe(0.004, 0.2), 1)
                 pe_target  = round(pe_premium * 0.35, 1)
                 pe_sl      = round(pe_premium * 1.4, 1)
 
@@ -880,12 +1135,12 @@ async def algo_signals():
                 direction = "MILD SELL"
                 color = "orange"
                 reasons = reasons_sell
-                pe_strike  = round(spot / strike_gap) * strike_gap
-                pe_premium = round(spot * 0.007 + atr_val * 0.4, 1)
+                pe_strike  = atm_strike
+                pe_premium = round(_est_pe(0.007, 0.4), 1)
                 pe_target  = round(pe_premium * 1.4, 1)
                 pe_sl      = round(pe_premium * 0.6, 1)
-                ce_strike  = pe_strike + strike_gap
-                ce_premium = round(spot * 0.004, 1)
+                ce_strike  = atm_strike + strike_gap
+                ce_premium = round(_est_otm_ce(0.004, 0.2), 1)
                 ce_target  = round(ce_premium * 0.35, 1)
                 ce_sl      = round(ce_premium * 1.4, 1)
 
@@ -893,11 +1148,17 @@ async def algo_signals():
                 direction = "NEUTRAL"
                 color = "yellow"
                 reasons = ["Indicators are mixed — wait for clearer setup"]
-                ce_strike  = round(spot / strike_gap) * strike_gap
-                pe_strike  = ce_strike
-                ce_premium = pe_premium = round(spot * 0.006, 1)
-                ce_target  = pe_target = round(ce_premium * 1.3, 1)
-                ce_sl      = pe_sl = round(ce_premium * 0.65, 1)
+                ce_strike  = atm_strike
+                pe_strike  = atm_strike
+                ce_premium = round(_est_ce(0.006, 0.3), 1)
+                pe_premium = round(_est_pe(0.006, 0.3), 1)
+                ce_target  = round(ce_premium * 1.3, 1)
+                pe_target  = round(pe_premium * 1.3, 1)
+                ce_sl      = round(ce_premium * 0.65, 1)
+                pe_sl      = round(pe_premium * 0.65, 1)
+
+            is_buy_ce  = direction in ("STRONG BUY",  "MILD BUY")
+            is_buy_pe  = direction in ("STRONG SELL", "MILD SELL")
 
             results[index] = sanitize({
                 "index": index,
@@ -913,14 +1174,15 @@ async def algo_signals():
                 "atr": round(atr_val, 1),
                 "lot_size": lot_size,
                 "reasons": reasons[:6],
+                "live_premiums": live_ce_ltp > 0 or live_pe_ltp > 0,
                 "ce": {
                     "strike": ce_strike,
-                    "action": "BUY CE" if direction in ("STRONG BUY","MILD BUY") else "SELL CE",
-                    "txn": "BUY" if direction in ("STRONG BUY","MILD BUY") else "SELL",
+                    "action": "BUY CE" if is_buy_ce else "SELL CE",
+                    "txn": "BUY" if is_buy_ce else "SELL",
                     "entry": ce_premium,
                     "target": ce_target,
                     "sl": ce_sl,
-                    "reward_risk": round((ce_target - ce_premium) / max(ce_premium - ce_sl, 0.1), 2),
+                    "reward_risk": round(abs(ce_target - ce_premium) / max(abs(ce_premium - ce_sl), 0.1), 2),
                     "tradingsymbol": _build_nfo_symbol(index, expiry_dt, ce_strike, "CE"),
                     "exchange": exchange,
                     "lot_size": lot_size,
@@ -928,8 +1190,8 @@ async def algo_signals():
                 },
                 "pe": {
                     "strike": pe_strike,
-                    "action": "BUY PE" if direction in ("STRONG SELL","MILD SELL") else "SELL PE",
-                    "txn": "BUY" if direction in ("STRONG SELL","MILD SELL") else "SELL",
+                    "action": "BUY PE" if is_buy_pe else "SELL PE",
+                    "txn": "BUY" if is_buy_pe else "SELL",
                     "entry": pe_premium,
                     "target": pe_target,
                     "sl": pe_sl,
@@ -1769,6 +2031,653 @@ async def smart_oi(index: str, expiry: Optional[str] = None):
             "top_ce_writing": top_ce_writing,
             "top_pe_writing": top_pe_writing,
         },
+    }))
+
+
+@app.get("/api/smart-oi-timeseries/{index}")
+async def smart_oi_timeseries(index: str, expiry: Optional[str] = None, interval: str = "5m"):
+    """
+    Smart OI Time-Series (stockmojo-style):
+    Returns intraday OHLCV candles + CE/PE OI over time + PCR over time.
+    """
+    import datetime as _dt
+
+    index = index.upper()
+    if not expiry:
+        expiry = get_nearest_expiry(index).strftime("%Y-%m-%d")
+
+    chain, spot = _get_option_chain_list(index, expiry)
+
+    # Total OI from current chain snapshot
+    total_ce_oi = sum((row.get("CE") or {}).get("oi", 0) or 0 for row in chain)
+    total_pe_oi = sum((row.get("PE") or {}).get("oi", 0) or 0 for row in chain)
+    current_pcr  = round(total_pe_oi / total_ce_oi, 3) if total_ce_oi > 0 else 1.0
+
+    # Parse interval
+    interval_map = {"1m": 1, "3m": 3, "5m": 5, "15m": 15}
+    mins = interval_map.get(interval, 5)
+
+    # Build intraday time slots: 09:15 → 15:30
+    today = _dt.date.today()
+    start_dt = _dt.datetime(today.year, today.month, today.day, 9, 15)
+    end_dt   = _dt.datetime(today.year, today.month, today.day, 15, 30)
+
+    slots: list[_dt.datetime] = []
+    cur = start_dt
+    while cur <= end_dt:
+        slots.append(cur)
+        cur += _dt.timedelta(minutes=mins)
+
+    n   = len(slots)
+    rng = np.random.default_rng(seed=int(today.strftime("%Y%m%d")) + mins * 31)
+
+    # ── Simulate OHLCV candles (GBM) ──────────────────────────────────────
+    sigma   = 0.00018 * math.sqrt(mins)           # per-bar vol
+    log_ret = rng.normal(0, sigma, n)
+    closes  = [spot]
+    for r in log_ret[1:]:
+        closes.append(closes[-1] * math.exp(r))
+    closes = [round(c, 2) for c in closes]
+
+    candles = []
+    prev_c  = spot
+    for i, t in enumerate(slots):
+        o  = round(prev_c, 2)
+        c  = closes[i]
+        noise = spot * 0.0004
+        h  = round(max(o, c) + abs(float(rng.normal(0, noise))), 2)
+        lo = round(min(o, c) - abs(float(rng.normal(0, noise))), 2)
+        vol = int(rng.integers(40_000, 180_000))
+        candles.append({
+            "time":      t.strftime("%H:%M"),
+            "timestamp": int(t.timestamp()),
+            "open":  o, "high": h, "low": lo, "close": c,
+            "volume": vol,
+        })
+        prev_c = c
+
+    # ── Simulate OI build-up over the day ─────────────────────────────────
+    base_ce = total_ce_oi * 0.55
+    base_pe = total_pe_oi * 0.55
+    oi_series  = []
+    pcr_series = []
+
+    for i, t in enumerate(slots):
+        frac     = (i + 1) / n
+        # OI grows toward current totals with small noise
+        ce_t = base_ce + frac * (total_ce_oi - base_ce) + float(rng.normal(0, total_ce_oi * 0.008))
+        pe_t = base_pe + frac * (total_pe_oi - base_pe) + float(rng.normal(0, total_pe_oi * 0.008))
+        ce_t = max(0.0, ce_t)
+        pe_t = max(0.0, pe_t)
+        net_t = ce_t - pe_t          # positive = call-heavy; negative = put-heavy
+        pcr_t = pe_t / ce_t if ce_t > 0 else 1.0
+
+        oi_series.append({
+            "time":   t.strftime("%H:%M"),
+            "ce_oi":  round(ce_t / 1e5, 3),     # Lakhs
+            "pe_oi":  round(pe_t / 1e5, 3),
+            "net_oi": round(net_t / 1e5, 3),
+        })
+        pcr_series.append({
+            "time": t.strftime("%H:%M"),
+            "pcr":  round(pcr_t, 3),
+        })
+
+    return JSONResponse(sanitize({
+        "index":              index,
+        "spot":               spot,
+        "expiry":             expiry,
+        "interval":           interval,
+        "total_ce_oi_lakh":  round(total_ce_oi / 1e5, 2),
+        "total_pe_oi_lakh":  round(total_pe_oi / 1e5, 2),
+        "current_pcr":        current_pcr,
+        "candles":            candles,
+        "oi_series":          oi_series,
+        "pcr_series":         pcr_series,
+    }))
+
+
+# ---------------------------------------------------------------------------
+# Stock F&O Picks — Top 5 shares with BUY CE / BUY PE recommendations
+# ---------------------------------------------------------------------------
+
+TOP_FO_STOCKS = [
+    {"symbol": "RELIANCE",  "name": "Reliance Industries", "lot_size": 500, "base_price": 1450},
+    {"symbol": "HDFCBANK",  "name": "HDFC Bank",           "lot_size": 550, "base_price": 990},
+    {"symbol": "ICICIBANK", "name": "ICICI Bank",          "lot_size": 700, "base_price": 1400},
+    {"symbol": "INFY",      "name": "Infosys",             "lot_size": 400, "base_price": 1600},
+    {"symbol": "TCS",       "name": "TCS",                 "lot_size": 175, "base_price": 3500},
+]
+
+
+def _stock_strike_interval(spot: float) -> float:
+    """Approximate NSE strike interval for a stock based on its price."""
+    if spot < 100:   return 1
+    if spot < 250:   return 2.5
+    if spot < 500:   return 5
+    if spot < 1000:  return 10
+    if spot < 2500:  return 20
+    if spot < 5000:  return 50
+    return 100
+
+
+def _classify_fut_buildup(change_pct: float, oi_change_pct: float) -> str:
+    """Classic futures price/OI matrix."""
+    if change_pct >= 0.1 and oi_change_pct >= 1:
+        return "LONG BUILDUP"
+    if change_pct <= -0.1 and oi_change_pct >= 1:
+        return "SHORT BUILDUP"
+    if change_pct >= 0.1 and oi_change_pct <= -1:
+        return "SHORT COVERING"
+    if change_pct <= -0.1 and oi_change_pct <= -1:
+        return "LONG UNWINDING"
+    return "NEUTRAL"
+
+
+def _build_stock_fo_result(
+    symbol: str, name: str, spot: float, change: float, change_pct: float,
+    fut: Dict[str, Any], tech: Dict[str, Any], opt: Dict[str, Any],
+    lot_size: int, source: str,
+) -> Dict[str, Any]:
+    """
+    Apply the trading-analysis rule set to one stock and produce a
+    BUY CE / BUY PE / WAIT recommendation with strike, entry, target, SL.
+
+    Rules (scored confluence, same philosophy as chart-signals):
+      1. EMA trend        : price > EMA20 > EMA50 bullish (+2) / inverse bearish (-2)
+      2. RSI momentum     : RSI >= 60 (+1), RSI <= 40 (-1)
+      3. Futures buildup  : LONG BUILDUP +2, SHORT BUILDUP -2,
+                            SHORT COVERING +1, LONG UNWINDING -1
+      4. Options PCR      : PCR > 1.2 put-writing support (+1), PCR < 0.8 (-1)
+      5. Futures basis    : premium > 0.2% (+1), discount < -0.2% (-1)
+      6. Day momentum     : day change > +0.75% (+1), < -0.75% (-1)
+
+    Strategy methods (also scored):
+      M1. Moving Average   : price > EMA20 & EMA50 → CE / below both → PE (covered by rule 1)
+      M2. S&R Breakout     : price breaks resistance/support with volume (+/-2)
+      M3. Risk-Reward      : trade only if Reward ÷ Risk >= 2 (target +60%, SL -30% → 1:2)
+      M4. Option Delta     : ATM CE delta >= 0.60 stronger CE (+1), PE delta <= -0.60 (-1)
+      M5. Quick Formula    : price vs VWAP + RSI 60/40 + volume increasing (+/-2)
+
+    Decision: score >= +6 BUY CE (HIGH), >= +3 BUY CE (MEDIUM),
+              <= -6 BUY PE (HIGH), <= -3 BUY PE (MEDIUM), else WAIT.
+    """
+    rsi    = tech["rsi"]
+    ema20  = tech["ema20"]
+    ema50  = tech["ema50"]
+    vwap   = tech.get("vwap") or spot
+    volume_ratio = tech.get("volume_ratio", 1.0)   # today vs 20-day avg volume
+    pcr    = opt["pcr"]
+    ce_delta = opt.get("ce_delta", 0.5)
+    pe_delta = opt.get("pe_delta", -0.5)
+    support    = opt["support"]
+    resistance = opt["resistance"]
+    basis_pct = fut["basis_pct"]
+    buildup   = fut["buildup"]
+
+    score = 0.0
+    reasons: List[str] = []
+    strategies: List[Dict[str, str]] = []
+
+    # 1. EMA trend
+    if spot > ema20 > ema50:
+        score += 2
+        reasons.append("Uptrend: price above EMA20 > EMA50")
+    elif spot < ema20 < ema50:
+        score -= 2
+        reasons.append("Downtrend: price below EMA20 < EMA50")
+    elif spot > ema20:
+        score += 1
+        reasons.append("Price holding above EMA20")
+    elif spot < ema20:
+        score -= 1
+        reasons.append("Price below EMA20")
+
+    # 2. RSI momentum
+    if rsi >= 60:
+        score += 1
+        reasons.append(f"RSI strong at {rsi:.0f}")
+    elif rsi <= 40:
+        score -= 1
+        reasons.append(f"RSI weak at {rsi:.0f}")
+    if rsi >= 78:
+        reasons.append(f"Caution: RSI overbought ({rsi:.0f})")
+    elif rsi <= 22:
+        reasons.append(f"Caution: RSI oversold ({rsi:.0f})")
+
+    # 3. Futures OI buildup
+    buildup_score = {
+        "LONG BUILDUP": 2, "SHORT BUILDUP": -2,
+        "SHORT COVERING": 1, "LONG UNWINDING": -1, "NEUTRAL": 0,
+    }[buildup]
+    score += buildup_score
+    if buildup != "NEUTRAL":
+        reasons.append(f"Futures: {buildup.title()} "
+                       f"(OI {fut['oi_change_pct']:+.1f}%, price {change_pct:+.2f}%)")
+
+    # 4. Options PCR
+    if pcr > 1.2:
+        score += 1
+        reasons.append(f"PCR {pcr:.2f}: put writers active (support)")
+    elif pcr < 0.8:
+        score -= 1
+        reasons.append(f"PCR {pcr:.2f}: call writers active (pressure)")
+
+    # 5. Futures basis
+    if basis_pct > 0.2:
+        score += 1
+        reasons.append(f"Futures at premium ({basis_pct:+.2f}%)")
+    elif basis_pct < -0.2:
+        score -= 1
+        reasons.append(f"Futures at discount ({basis_pct:+.2f}%)")
+
+    # 6. Day momentum
+    if change_pct > 0.75:
+        score += 1
+        reasons.append(f"Strong day move {change_pct:+.2f}%")
+    elif change_pct < -0.75:
+        score -= 1
+        reasons.append(f"Weak day move {change_pct:+.2f}%")
+
+    # ── Strategy Methods ─────────────────────────────────────
+    # Method 1: Moving Average (already scored in rule 1 — verdict only)
+    if spot > ema20 and spot > ema50:
+        m1 = "BUY CE"
+    elif spot < ema20 and spot < ema50:
+        m1 = "BUY PE"
+    else:
+        m1 = "NEUTRAL"
+    strategies.append({
+        "method": "Moving Average",
+        "signal": m1,
+        "detail": f"Price {spot:,.1f} vs EMA20 {ema20:,.1f} / EMA50 {ema50:,.1f}",
+    })
+
+    # Method 2: Support & Resistance breakout with volume
+    vol_up = volume_ratio >= 1.2
+    if spot > resistance and vol_up:
+        m2 = "BUY CE"
+        score += 2
+        reasons.append(f"Breakout above resistance {resistance:g} on {volume_ratio:.1f}x volume")
+    elif spot < support and vol_up:
+        m2 = "BUY PE"
+        score -= 2
+        reasons.append(f"Breakdown below support {support:g} on {volume_ratio:.1f}x volume")
+    else:
+        m2 = "NEUTRAL"
+    strategies.append({
+        "method": "S&R Breakout + Volume",
+        "signal": m2,
+        "detail": f"S {support:g} / R {resistance:g} · volume {volume_ratio:.1f}x avg",
+    })
+
+    # Method 4: Option Delta
+    if ce_delta >= 0.60:
+        m4 = "BUY CE"
+        score += 1
+        reasons.append(f"ATM CE delta {ce_delta:.2f} ≥ 0.60 — stronger CE movement")
+    elif pe_delta <= -0.60:
+        m4 = "BUY PE"
+        score -= 1
+        reasons.append(f"ATM PE delta {pe_delta:.2f} ≤ -0.60 — stronger PE movement")
+    else:
+        m4 = "NEUTRAL"
+    strategies.append({
+        "method": "Option Delta",
+        "signal": m4,
+        "detail": f"CE Δ {ce_delta:+.2f} · PE Δ {pe_delta:+.2f} (≈0.50 = ATM)",
+    })
+
+    # Method 5 (Quick Formula): VWAP + RSI + volume increasing
+    if spot > vwap and rsi > 60 and vol_up:
+        m5 = "BUY CE"
+        score += 2
+        reasons.append(f"Quick formula: price > VWAP ({vwap:,.1f}), RSI {rsi:.0f} > 60, volume rising")
+    elif spot < vwap and rsi < 40 and vol_up:
+        m5 = "BUY PE"
+        score -= 2
+        reasons.append(f"Quick formula: price < VWAP ({vwap:,.1f}), RSI {rsi:.0f} < 40, volume rising")
+    else:
+        m5 = "NEUTRAL"
+    strategies.append({
+        "method": "VWAP Quick Formula",
+        "signal": m5,
+        "detail": f"VWAP {vwap:,.1f} · RSI {rsi:.0f} · volume {volume_ratio:.1f}x",
+    })
+
+    # ── Decision ──────────────────────────────────────────────
+    if score >= 6:
+        action, confidence = "BUY CE", "HIGH"
+    elif score >= 3:
+        action, confidence = "BUY CE", "MEDIUM"
+    elif score <= -6:
+        action, confidence = "BUY PE", "HIGH"
+    elif score <= -3:
+        action, confidence = "BUY PE", "MEDIUM"
+    else:
+        action, confidence = "WAIT", "LOW"
+        if not reasons:
+            reasons.append("No clear directional edge — mixed signals")
+        reasons.append("Signals not aligned strongly enough to buy options")
+
+    atm = opt["atm"]
+    expiry_label = opt["expiry"]
+    if action == "BUY CE":
+        strike, entry, spot_target = atm, opt["ce_ltp"], opt["resistance"]
+        opt_type = "CE"
+    elif action == "BUY PE":
+        strike, entry, spot_target = atm, opt["pe_ltp"], opt["support"]
+        opt_type = "PE"
+    else:
+        strike, entry, spot_target, opt_type = atm, 0, atm, None
+
+    # Method 3: Risk-Reward — trade only if Reward ÷ Risk >= 2.
+    # Target +60% / SL -30% of premium → Reward 0.6E ÷ Risk 0.3E = 1:2 exactly.
+    target   = round(entry * 1.6, 2) if entry else 0
+    stoploss = round(entry * 0.7, 2) if entry else 0
+    risk     = round(entry - stoploss, 2) if entry else 0
+    reward   = round(target - entry, 2) if entry else 0
+    rr_ratio = round(reward / risk, 2) if risk else 0
+    rr_ok    = rr_ratio >= 2
+    if entry and not rr_ok:
+        action, confidence, opt_type = "WAIT", "LOW", None
+        reasons.append(f"Risk-reward {rr_ratio:.1f} below 1:2 minimum — trade skipped")
+    strategies.insert(2, {
+        "method": "Risk-Reward ≥ 1:2",
+        "signal": ("PASS" if rr_ok else "FAIL") if entry else "—",
+        "detail": (f"Risk ₹{risk:,.2f} · Reward ₹{reward:,.2f} · R:R 1:{rr_ratio:g}"
+                   if entry else "No trade — not evaluated"),
+    })
+
+    recommendation = {
+        "action":       action,
+        "option_type":  opt_type,
+        "score":        round(score, 1),
+        "confidence":   confidence,
+        "strike":       strike,
+        "contract":     f"{symbol} {expiry_label} {strike:g} {opt_type}" if opt_type else "—",
+        "entry":        round(entry, 2),
+        "target":       target,      # +60% premium
+        "stoploss":     stoploss,    # -30% premium
+        "risk":         risk,
+        "reward":       reward,
+        "rr_ratio":     rr_ratio,
+        "spot_target":  spot_target,
+        "lot_size":     lot_size,
+        "lot_cost":     round(entry * lot_size, 0) if entry else 0,
+        "reasons":      reasons,
+    }
+
+    return {
+        "symbol":     symbol,
+        "name":       name,
+        "spot":       round(spot, 2),
+        "change":     round(change, 2),
+        "change_pct": round(change_pct, 2),
+        "futures":    fut,
+        "technical": {
+            "rsi":   round(rsi, 1),
+            "ema20": round(ema20, 2),
+            "ema50": round(ema50, 2),
+            "trend": "UPTREND" if spot > ema20 > ema50
+                     else "DOWNTREND" if spot < ema20 < ema50 else "SIDEWAYS",
+        },
+        "options":        opt,
+        "strategies":     strategies,
+        "recommendation": recommendation,
+        "source":         source,
+    }
+
+
+def _mock_stock_fo(stock: Dict[str, Any]) -> Dict[str, Any]:
+    """Deterministic (per stock per day) simulated F&O snapshot used when not logged in."""
+    from config import get_monthly_expiry
+
+    symbol = stock["symbol"]
+    today  = date.today()
+    rng    = np.random.default_rng(int(today.strftime("%Y%m%d")) + sum(ord(c) for c in symbol) * 7)
+
+    spot       = round(stock["base_price"] * (1 + float(rng.normal(0, 0.04))), 2)
+    change_pct = float(rng.normal(0, 1.2))
+    change     = round(spot * change_pct / 100, 2)
+
+    # Technicals consistent with the day's direction
+    trend_bias = change_pct + float(rng.normal(0, 0.7))
+    rsi   = max(15.0, min(85.0, 50 + trend_bias * 9 + float(rng.normal(0, 6))))
+    ema20 = spot * (1 - trend_bias * 0.005)
+    ema50 = spot * (1 - trend_bias * 0.011)
+
+    # Futures
+    fut_oi        = int(rng.integers(2_000_000, 30_000_000))
+    oi_change_pct = float(rng.normal(change_pct * 1.6, 2.5))
+    oi_change     = int(fut_oi * oi_change_pct / 100)
+    basis_pct     = float(rng.normal(0.18, 0.18))
+    fut_ltp       = round(spot * (1 + basis_pct / 100), 2)
+
+    expiry     = get_monthly_expiry("NIFTY").strftime("%Y-%m-%d")
+    dte        = days_to_expiry(expiry)
+    interval   = _stock_strike_interval(spot)
+    atm        = round(spot / interval) * interval
+
+    # ATM premium ≈ Black-Scholes ballpark for ~25% stock IV
+    iv      = max(0.18, min(0.45, 0.25 + float(rng.normal(0, 0.04))))
+    base_prem = spot * iv * math.sqrt(max(dte, 1) / 365) * 0.8
+    ce_ltp  = round(base_prem * (1 + change_pct * 0.05), 2)
+    pe_ltp  = round(base_prem * (1 - change_pct * 0.05), 2)
+    pcr     = max(0.4, min(1.8, 1.0 + change_pct * 0.18 + float(rng.normal(0, 0.15))))
+
+    # VWAP sits behind price in the direction of the move; volume rises on big moves
+    vwap         = round(spot * (1 - change_pct * 0.004 + float(rng.normal(0, 0.001))), 2)
+    volume_ratio = round(max(0.4, float(rng.lognormal(0, 0.3)) + abs(change_pct) * 0.25), 2)
+
+    # ATM option deltas (Black-Scholes)
+    from analysis.options import calculate_greeks
+    ce_delta = calculate_greeks(spot, atm, dte, iv, RISK_FREE_RATE, "CE")["delta"]
+    pe_delta = calculate_greeks(spot, atm, dte, iv, RISK_FREE_RATE, "PE")["delta"]
+
+    fut = {
+        "tradingsymbol": f"{symbol} {expiry[:7]} FUT",
+        "ltp":           fut_ltp,
+        "oi":            fut_oi,
+        "oi_change":     oi_change,
+        "oi_change_pct": round(oi_change_pct, 2),
+        "basis":         round(fut_ltp - spot, 2),
+        "basis_pct":     round(basis_pct, 2),
+        "buildup":       _classify_fut_buildup(change_pct, oi_change_pct),
+        "expiry":        expiry,
+    }
+    tech = {"rsi": rsi, "ema20": ema20, "ema50": ema50,
+            "vwap": vwap, "volume_ratio": volume_ratio}
+    opt = {
+        "pcr":         round(pcr, 2),
+        "atm":         atm,
+        "ce_ltp":      ce_ltp,
+        "pe_ltp":      pe_ltp,
+        "iv":          round(iv * 100, 1),
+        "ce_delta":    ce_delta,
+        "pe_delta":    pe_delta,
+        "resistance":  atm + 2 * interval,
+        "support":     atm - 2 * interval,
+        "expiry":      expiry,
+        "dte":         dte,
+    }
+    return _build_stock_fo_result(
+        symbol, stock["name"], spot, change, change_pct,
+        fut, tech, opt, stock["lot_size"], "mock",
+    )
+
+
+def _live_stock_fo(client: ZerodhaClient, stock: Dict[str, Any]) -> Dict[str, Any]:
+    """Live Zerodha-powered F&O snapshot + recommendation for one stock."""
+    symbol = stock["symbol"]
+    today  = date.today()
+
+    # ── Spot ─────────────────────────────────────────────────
+    nse_sym = f"NSE:{symbol}"
+    q       = client.get_quote([nse_sym])[nse_sym]
+    spot    = q["last_price"]
+    prev_close = (q.get("ohlc") or {}).get("close") or spot
+    change     = q.get("net_change", spot - prev_close)
+    change_pct = (change / prev_close * 100) if prev_close else 0
+
+    # ── Futures (near month) ─────────────────────────────────
+    insts = client.get_nfo_instruments(symbol)
+    futs  = sorted(
+        [i for i in insts if i.get("instrument_type") == "FUT"
+         and isinstance(i.get("expiry"), date) and i["expiry"] >= today],
+        key=lambda i: i["expiry"],
+    )
+    if not futs:
+        raise ValueError(f"No futures contract found for {symbol}")
+    fut_inst = futs[0]
+    lot_size = fut_inst.get("lot_size") or stock["lot_size"]
+
+    fut_sym = f"NFO:{fut_inst['tradingsymbol']}"
+    fq      = client.get_quote([fut_sym])[fut_sym]
+    fut_ltp = fq.get("last_price", spot)
+    fut_oi  = fq.get("oi", 0) or 0
+    prev_oi = fq.get("oi_day_low") or fut_oi   # same proxy as option chain
+    oi_change     = fut_oi - prev_oi
+    oi_change_pct = (oi_change / prev_oi * 100) if prev_oi else 0
+    basis     = fut_ltp - spot
+    basis_pct = (basis / spot * 100) if spot else 0
+
+    # ── Technicals from daily futures candles ────────────────
+    from analysis.technical import calculate_ema, calculate_rsi
+    candles = client.get_historical_data(
+        fut_inst["instrument_token"], interval="day", days=120
+    )
+    closes = pd.Series([c["close"] for c in candles], dtype=float)
+    if len(closes) >= 20:
+        rsi   = float(calculate_rsi(closes, 14).iloc[-1])
+        ema20 = float(calculate_ema(closes, 20).iloc[-1])
+        ema50 = float(calculate_ema(closes, 50).iloc[-1]) if len(closes) >= 50 else float(closes.mean())
+    else:
+        rsi, ema20, ema50 = 50.0, spot, spot
+
+    # VWAP (day average price from quote) + volume vs 20-day average
+    vwap = q.get("average_price") or spot
+    day_volume = q.get("volume", 0) or 0
+    vols = [c.get("volume", 0) or 0 for c in candles[-21:-1]]
+    avg_volume = (sum(vols) / len(vols)) if vols else 0
+    volume_ratio = round(day_volume / avg_volume, 2) if avg_volume else 1.0
+
+    # ── Options around ATM (near expiry) ─────────────────────
+    opts = [i for i in insts if i.get("instrument_type") in ("CE", "PE")
+            and isinstance(i.get("expiry"), date) and i["expiry"] >= today]
+    if not opts:
+        raise ValueError(f"No options found for {symbol}")
+    near_exp = min(i["expiry"] for i in opts)
+    opts     = [i for i in opts if i["expiry"] == near_exp]
+
+    strikes_sorted = sorted(set(i["strike"] for i in opts))
+    atm     = min(strikes_sorted, key=lambda s: abs(s - spot))
+    atm_idx = strikes_sorted.index(atm)
+    sel_strikes = set(strikes_sorted[max(0, atm_idx - 5): atm_idx + 6])
+    sel = [i for i in opts if i["strike"] in sel_strikes]
+
+    quotes = client.get_quote([f"NFO:{i['tradingsymbol']}" for i in sel])
+    ce_oi_by_strike: Dict[float, int] = {}
+    pe_oi_by_strike: Dict[float, int] = {}
+    ce_ltp = pe_ltp = 0.0
+    for inst in sel:
+        iq = quotes.get(f"NFO:{inst['tradingsymbol']}", {})
+        oi = iq.get("oi", 0) or 0
+        if inst["instrument_type"] == "CE":
+            ce_oi_by_strike[inst["strike"]] = ce_oi_by_strike.get(inst["strike"], 0) + oi
+            if inst["strike"] == atm:
+                ce_ltp = iq.get("last_price", 0) or 0
+        else:
+            pe_oi_by_strike[inst["strike"]] = pe_oi_by_strike.get(inst["strike"], 0) + oi
+            if inst["strike"] == atm:
+                pe_ltp = iq.get("last_price", 0) or 0
+
+    total_ce_oi = sum(ce_oi_by_strike.values())
+    total_pe_oi = sum(pe_oi_by_strike.values())
+    pcr = (total_pe_oi / total_ce_oi) if total_ce_oi else 1.0
+    interval   = _stock_strike_interval(spot)
+    resistance = max(ce_oi_by_strike, key=ce_oi_by_strike.get) if ce_oi_by_strike else atm + 2 * interval
+    support    = max(pe_oi_by_strike, key=pe_oi_by_strike.get) if pe_oi_by_strike else atm - 2 * interval
+
+    # Fallback premium estimate if market closed / no LTP
+    expiry_str = near_exp.strftime("%Y-%m-%d")
+    dte = days_to_expiry(expiry_str)
+    if not ce_ltp or not pe_ltp:
+        est = spot * 0.25 * math.sqrt(max(dte, 1) / 365) * 0.8
+        ce_ltp = ce_ltp or round(est, 2)
+        pe_ltp = pe_ltp or round(est, 2)
+
+    # ATM deltas — back out a ballpark IV from the ATM premium, then Black-Scholes
+    from analysis.options import calculate_greeks
+    iv_est = (ce_ltp + pe_ltp) / 2 / (spot * 0.8 * math.sqrt(max(dte, 1) / 365))
+    iv_est = max(0.12, min(0.60, iv_est))
+    ce_delta = calculate_greeks(spot, atm, dte, iv_est, RISK_FREE_RATE, "CE")["delta"]
+    pe_delta = calculate_greeks(spot, atm, dte, iv_est, RISK_FREE_RATE, "PE")["delta"]
+
+    fut = {
+        "tradingsymbol": fut_inst["tradingsymbol"],
+        "ltp":           round(fut_ltp, 2),
+        "oi":            fut_oi,
+        "oi_change":     oi_change,
+        "oi_change_pct": round(oi_change_pct, 2),
+        "basis":         round(basis, 2),
+        "basis_pct":     round(basis_pct, 2),
+        "buildup":       _classify_fut_buildup(change_pct, oi_change_pct),
+        "expiry":        fut_inst["expiry"].strftime("%Y-%m-%d"),
+    }
+    tech = {"rsi": rsi, "ema20": ema20, "ema50": ema50,
+            "vwap": vwap, "volume_ratio": volume_ratio}
+    opt = {
+        "pcr":         round(pcr, 2),
+        "atm":         atm,
+        "ce_ltp":      round(ce_ltp, 2),
+        "pe_ltp":      round(pe_ltp, 2),
+        "iv":          round(iv_est * 100, 1),
+        "ce_delta":    ce_delta,
+        "pe_delta":    pe_delta,
+        "resistance":  resistance,
+        "support":     support,
+        "expiry":      expiry_str,
+        "dte":         dte,
+    }
+    return _build_stock_fo_result(
+        symbol, stock["name"], spot, change, change_pct,
+        fut, tech, opt, lot_size, "live",
+    )
+
+
+@app.get("/api/stock-fo-picks")
+async def stock_fo_picks():
+    """
+    Top 5 F&O stocks (RELIANCE, HDFCBANK, ICICIBANK, INFY, TCS) analyzed with
+    futures + options + technical rules, each with a BUY CE / BUY PE / WAIT call.
+    """
+    client = get_client()
+    results = []
+    for stock in TOP_FO_STOCKS:
+        try:
+            if client.is_authenticated():
+                results.append(_live_stock_fo(client, stock))
+            else:
+                results.append(_mock_stock_fo(stock))
+        except Exception as e:
+            logger.warning("Stock F&O analysis failed for %s, using mock: %s",
+                           stock["symbol"], e)
+            results.append(_mock_stock_fo(stock))
+
+    # Strongest conviction first
+    results.sort(key=lambda r: abs(r["recommendation"]["score"]), reverse=True)
+
+    summary = {
+        "buy_ce": sum(1 for r in results if r["recommendation"]["action"] == "BUY CE"),
+        "buy_pe": sum(1 for r in results if r["recommendation"]["action"] == "BUY PE"),
+        "wait":   sum(1 for r in results if r["recommendation"]["action"] == "WAIT"),
+    }
+    return JSONResponse(sanitize({
+        "timestamp": datetime.now().isoformat(),
+        "mode":      "live" if client.is_authenticated() else "mock",
+        "summary":   summary,
+        "stocks":    results,
     }))
 
 

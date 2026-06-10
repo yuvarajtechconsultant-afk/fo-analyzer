@@ -73,6 +73,24 @@ class ZerodhaClient:
         """Check if client has a valid access token."""
         return bool(self._access_token)
 
+    def logout(self) -> bool:
+        """
+        Invalidate the current access token on Zerodha and clear it locally.
+        Returns True if Zerodha confirmed the invalidation.
+        """
+        invalidated = False
+        try:
+            if self._access_token:
+                self.kite.invalidate_access_token()
+                invalidated = True
+                logger.info("Zerodha access token invalidated")
+        except Exception as e:
+            logger.warning("Error invalidating access token (clearing locally anyway): %s", e)
+        finally:
+            self._access_token = None
+            self.kite.set_access_token(None)
+        return invalidated
+
     def get_access_token(self) -> Optional[str]:
         return self._access_token
 
@@ -268,17 +286,21 @@ class ZerodhaClient:
             q = all_quotes.get(sym, {})
             ohlc = q.get("ohlc", {})
 
+            current_oi = q.get("oi", 0) or 0
+            # oi_day_low ≈ opening OI (closest proxy to prev-day close available in quotes)
+            prev_oi = q.get("oi_day_low") or current_oi
             entry = {
                 "tradingsymbol": inst["tradingsymbol"],
                 "instrument_token": inst["instrument_token"],
                 "ltp": q.get("last_price", 0),
+                "last_price": q.get("last_price", 0),  # alias for compatibility
                 "open": ohlc.get("open", 0),
                 "high": ohlc.get("high", 0),
                 "low": ohlc.get("low", 0),
                 "close": ohlc.get("close", 0),
                 "volume": q.get("volume", 0),
-                "oi": q.get("oi", 0),
-                "oi_change": q.get("oi", 0) - q.get("oi_day_low", 0),
+                "oi": current_oi,
+                "oi_change": current_oi - prev_oi,
                 "bid": q.get("depth", {}).get("buy", [{}])[0].get("price", 0) if q.get("depth") else 0,
                 "ask": q.get("depth", {}).get("sell", [{}])[0].get("price", 0) if q.get("depth") else 0,
             }
