@@ -6,6 +6,10 @@
   <title>F&O Analyzer — NIFTY & SENSEX</title>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    // Apply saved theme before first paint to avoid a flash
+    document.documentElement.setAttribute('data-theme', localStorage.getItem('fo-theme') || 'dark');
+  </script>
   <style>
     /* ===== CSS Variables ===== */
     :root {
@@ -24,6 +28,25 @@
       --text-bright:  #f0f6fc;
       --font-mono:    'Courier New', monospace;
     }
+
+    /* ===== Light theme ===== */
+    html[data-theme="light"] {
+      --bg-primary:   #f3f5f7;
+      --bg-card:      #ffffff;
+      --bg-card2:     #eaeef2;
+      --border:       #d0d7de;
+      --border-light: #afb8c1;
+      --green:        #0f9d4f;
+      --red:          #d1242f;
+      --yellow:       #bf8700;
+      --blue:         #0969da;
+      --purple:       #8250df;
+      --text:         #24292f;
+      --text-muted:   #57606a;
+      --text-bright:  #0a0c10;
+    }
+    html[data-theme="light"] .btn-login { color: #fff; }
+    html[data-theme="light"] .btn-login.logout { color: var(--red); }
 
     /* ===== Reset & Base ===== */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -704,6 +727,7 @@
     <div class="nav-right">
       <span class="conn-dot" id="conn-dot" title="WebSocket status"></span>
       <span id="market-time" style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono)"></span>
+      <button class="collapse-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle dark / light mode" style="font-size:14px;padding:3px 9px;">☀️</button>
       <button class="btn-login" id="login-btn" onclick="handleLogin()">Login</button>
       <button class="btn-login logout" id="logout-btn" onclick="handleLogout()" style="display:none" title="Logout from Zerodha session">Logout</button>
     </div>
@@ -767,6 +791,10 @@
             </svg>
             <div class="gauge-label" id="gauge-label" style="color:var(--yellow)">NEUTRAL</div>
             <div class="gauge-score" id="gauge-score">Score: 0</div>
+            <div style="font-size:10px;color:var(--text-muted);text-align:center;line-height:1.5;">
+              Combines PCR, VIX, market breadth &amp; FII flows.<br>
+              Left = bearish · Right = bullish
+            </div>
           </div>
         </div>
 
@@ -777,6 +805,11 @@
             <thead><tr><th>Factor</th><th>Value</th><th>Signal</th><th>Score</th></tr></thead>
             <tbody><tr><td colspan="4" class="loading-overlay"><div class="spinner"></div> Loading...</td></tr></tbody>
           </table>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:8px;line-height:1.5;">
+            Positive score supports upside, negative supports downside.
+            PCR &gt; 1 = put writers active (bullish) · VIX low = calm market ·
+            A/D &gt; 1 = more stocks rising · FII positive = foreign buying.
+          </div>
         </div>
       </div>
 
@@ -875,17 +908,17 @@
         </div>
       </div>
       <!-- CE vs PE OI Summary Bar -->
-      <div id="chain-oi-summary" style="display:none;margin:10px 0;padding:10px 14px;background:#161b22;border-radius:8px;border:1px solid #21262d">
+      <div id="chain-oi-summary" style="display:none;margin:10px 0;padding:10px 14px;background:var(--bg-card);border-radius:8px;border:1px solid var(--border)">
         <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:12px">
           <span style="color:#ff6b6b">CE Total OI: <b id="chain-total-ce-oi">—</b></span>
-          <span style="color:#8b949e;font-size:11px">PCR = PE OI ÷ CE OI</span>
-          <span style="color:#00d964">PE Total OI: <b id="chain-total-pe-oi">—</b></span>
+          <span style="color:var(--text-muted);font-size:11px">PCR = PE OI ÷ CE OI</span>
+          <span style="color:var(--green)">PE Total OI: <b id="chain-total-pe-oi">—</b></span>
         </div>
-        <div style="display:flex;height:10px;border-radius:4px;overflow:hidden;background:#21262d">
+        <div style="display:flex;height:10px;border-radius:4px;overflow:hidden;background:var(--bg-card2)">
           <div id="chain-ce-bar" style="background:#ff6b6b;height:100%;transition:width 0.4s"></div>
           <div id="chain-pe-bar" style="background:#00d964;height:100%;transition:width 0.4s"></div>
         </div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;color:#8b949e;margin-top:4px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-top:4px">
           <span id="chain-ce-pct">—</span>
           <span id="chain-pe-pct">—</span>
         </div>
@@ -904,7 +937,7 @@
                 <th style="text-align:right">IV%</th>
                 <th style="text-align:right">LTP</th>
                 <!-- Strike -->
-                <th class="center" style="min-width:80px;background:#1c2128">STRIKE</th>
+                <th class="center" style="min-width:80px;background:var(--bg-card2)">STRIKE</th>
                 <!-- PE Side (left-to-right layout) -->
                 <th>LTP</th>
                 <th>IV%</th>
@@ -1033,17 +1066,17 @@
     <!-- ===== OI HISTORY TAB ===== -->
     <div class="tab-panel" id="tab-oi-history">
       <div class="section-controls" style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
-        <select id="oih-index" onchange="loadOIHistory()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;padding:6px 12px;border-radius:6px;font-size:13px">
+        <select id="oih-index" onchange="loadOIHistory()" style="background:var(--bg-card2);color:var(--text);border:1px solid var(--border-light);padding:6px 12px;border-radius:6px;font-size:13px">
           <option value="NIFTY">NIFTY</option>
           <option value="SENSEX">SENSEX</option>
         </select>
-        <select id="oih-expiry" onchange="loadOIHistory()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;padding:6px 12px;border-radius:6px;font-size:13px"></select>
-        <select id="oih-days" onchange="loadOIHistory()" style="background:#21262d;color:#e6edf3;border:1px solid #30363d;padding:6px 12px;border-radius:6px;font-size:13px">
+        <select id="oih-expiry" onchange="loadOIHistory()" style="background:var(--bg-card2);color:var(--text);border:1px solid var(--border-light);padding:6px 12px;border-radius:6px;font-size:13px"></select>
+        <select id="oih-days" onchange="loadOIHistory()" style="background:var(--bg-card2);color:var(--text);border:1px solid var(--border-light);padding:6px 12px;border-radius:6px;font-size:13px">
           <option value="5">Last 5 Days</option>
           <option value="10">Last 10 Days</option>
           <option value="22" selected>Last 1 Month</option>
         </select>
-        <span id="oih-status" style="color:#8b949e;font-size:12px"></span>
+        <span id="oih-status" style="color:var(--text-muted);font-size:12px"></span>
       </div>
 
       <!-- Trend Summary Cards -->
@@ -1057,9 +1090,9 @@
 
       <!-- Daily History Table -->
       <div class="card" style="padding:0;overflow:hidden;margin-bottom:18px">
-        <div style="padding:12px 16px;border-bottom:1px solid #21262d;display:flex;justify-content:space-between;align-items:center">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
           <span style="font-weight:600;font-size:14px">Daily Option Chain Snapshots</span>
-          <span style="font-size:11px;color:#8b949e">Past month — each row = end of day OI snapshot</span>
+          <span style="font-size:11px;color:var(--text-muted)">Past month — each row = end of day OI snapshot</span>
         </div>
         <div style="overflow-x:auto">
           <table class="data-table" id="oih-daily-table">
@@ -1081,7 +1114,7 @@
               </tr>
             </thead>
             <tbody id="oih-daily-body">
-              <tr><td colspan="13" style="text-align:center;color:#8b949e;padding:30px">Loading…</td></tr>
+              <tr><td colspan="13" style="text-align:center;color:var(--text-muted);padding:30px">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -1089,21 +1122,21 @@
 
       <!-- Per-day Chain Viewer -->
       <div class="card" style="padding:0;overflow:hidden">
-        <div style="padding:12px 16px;border-bottom:1px solid #21262d;display:flex;justify-content:space-between;align-items:center">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
           <span style="font-weight:600;font-size:14px">📅 Strike-wise OI — <span id="oih-chain-date">select a row above</span></span>
-          <span style="font-size:11px;color:#8b949e">Click any row above to see full strike chain</span>
+          <span style="font-size:11px;color:var(--text-muted)">Click any row above to see full strike chain</span>
         </div>
         <div style="overflow-x:auto">
           <table class="data-table" id="oih-chain-table">
             <thead>
               <tr>
                 <th>CE OI</th><th>CE Chg</th><th>CE IV</th><th>CE LTP</th>
-                <th style="background:#1c2128;color:#ffd700">Strike</th>
+                <th style="background:var(--bg-card2);color:var(--yellow)">Strike</th>
                 <th>PE LTP</th><th>PE IV</th><th>PE Chg</th><th>PE OI</th>
               </tr>
             </thead>
             <tbody id="oih-chain-body">
-              <tr><td colspan="9" style="text-align:center;color:#8b949e;padding:20px">Click a date row above</td></tr>
+              <tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">Click a date row above</td></tr>
             </tbody>
           </table>
         </div>
@@ -1295,12 +1328,16 @@
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
         <div>
           <h2 style="font-size:16px;font-weight:700;color:var(--text-bright);margin-bottom:2px;">🤖 Algo Signal Engine</h2>
-          <p style="font-size:12px;color:var(--text-muted);">Multi-factor confluence — 7 indicators scoring NIFTY &amp; SENSEX in real-time</p>
+          <p style="font-size:12px;color:var(--text-muted);">Signals recompute from live market data — auto-refreshes every 30s and alerts when the call changes</p>
         </div>
-        <button class="interval-btn active" onclick="loadAlgo()" style="display:flex;align-items:center;gap:6px;">
-          <span id="algo-spinner" style="display:none" class="spinner" style="width:14px;height:14px;border-width:2px;"></span>
-          ↻ Refresh
-        </button>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="algo-updated" style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);"></span>
+          <button class="interval-btn active" id="algo-auto-btn" onclick="toggleAlgoAuto()" title="Pause / resume auto-refresh">⏸ Auto 30s</button>
+          <button class="interval-btn" onclick="loadAlgo()" style="display:flex;align-items:center;gap:6px;">
+            <span id="algo-spinner" style="display:none" class="spinner" style="width:14px;height:14px;border-width:2px;"></span>
+            ↻ Refresh
+          </button>
+        </div>
       </div>
 
       <div id="algo-content">
@@ -1312,20 +1349,20 @@
     <div class="tab-panel" id="tab-smart-oi">
 
       <!-- Controls Bar -->
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:8px 12px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
         <!-- Index toggle -->
         <button class="index-btn active" id="soi-nifty-btn"  onclick="setSOIIndex('NIFTY')">NIFTY</button>
         <button class="index-btn"        id="soi-sensex-btn" onclick="setSOIIndex('SENSEX')">SENSEX</button>
-        <div style="width:1px;height:20px;background:#30363d;margin:0 2px;"></div>
+        <div style="width:1px;height:20px;background:var(--border-light);margin:0 2px;"></div>
         <!-- Expiry -->
         <select class="expiry-select" id="soi-expiry" onchange="loadSmartOI()" style="min-width:110px;font-size:12px;"></select>
-        <div style="width:1px;height:20px;background:#30363d;margin:0 2px;"></div>
+        <div style="width:1px;height:20px;background:var(--border-light);margin:0 2px;"></div>
         <!-- Intervals -->
         <button class="interval-btn active" id="soi-int-1m"  onclick="setSOIInterval('1m')">1m</button>
         <button class="interval-btn"        id="soi-int-3m"  onclick="setSOIInterval('3m')">3m</button>
         <button class="interval-btn"        id="soi-int-5m"  onclick="setSOIInterval('5m')">5m</button>
         <button class="interval-btn"        id="soi-int-15m" onclick="setSOIInterval('15m')">15m</button>
-        <div style="width:1px;height:20px;background:#30363d;margin:0 2px;"></div>
+        <div style="width:1px;height:20px;background:var(--border-light);margin:0 2px;"></div>
         <!-- Live / Historical -->
         <button class="interval-btn active" id="soi-live-btn" onclick="setSOIMode('live')">Live</button>
         <button class="interval-btn"        id="soi-hist-btn" onclick="setSOIMode('historical')">Historical</button>
@@ -1338,8 +1375,8 @@
       <div style="display:flex;gap:10px;height:525px;align-items:flex-start;">
 
         <!-- LEFT: Candlestick price chart (55%) -->
-        <div style="flex:0 0 55%;min-width:0;background:#161b22;border:1px solid #21262d;border-radius:8px;overflow:hidden;display:flex;flex-direction:column;">
-          <div style="padding:7px 12px;border-bottom:1px solid #21262d;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
+        <div style="flex:0 0 55%;min-width:0;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;">
+          <div style="padding:7px 12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
             <span id="soi-price-title" style="font-size:13px;font-weight:700;color:var(--text-bright);">NIFTY</span>
             <span id="soi-price-info"  style="font-size:12px;color:var(--text-muted);"></span>
           </div>
@@ -1350,7 +1387,7 @@
         <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;">
 
           <!-- OI Time-Series Line Chart — fixed 300px height -->
-          <div style="height:300px;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:9px 12px;box-sizing:border-box;flex-shrink:0;">
+          <div style="height:300px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:9px 12px;box-sizing:border-box;flex-shrink:0;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
               <span style="font-size:12px;font-weight:600;color:var(--text-bright);">Open Interest</span>
               <div style="display:flex;gap:10px;font-size:11px;color:var(--text-muted);">
@@ -1365,9 +1402,9 @@
           </div>
 
           <!-- PCR Time-Series Line Chart — fixed 210px height -->
-          <div style="height:210px;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:9px 12px;box-sizing:border-box;flex-shrink:0;">
+          <div style="height:210px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:9px 12px;box-sizing:border-box;flex-shrink:0;">
             <div style="font-size:12px;font-weight:600;color:var(--text-bright);margin-bottom:6px;">
-              PCR &nbsp;<span id="soi-pcr-live" style="font-size:14px;font-weight:700;color:#ffd700;">—</span>
+              PCR &nbsp;<span id="soi-pcr-live" style="font-size:14px;font-weight:700;color:var(--yellow);">—</span>
             </div>
             <div style="position:relative;height:162px;">
               <canvas id="soi-pcr-chart"></canvas>
@@ -1383,7 +1420,7 @@
     <div class="tab-panel" id="tab-stock-picks">
 
       <!-- Controls Bar -->
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:8px 12px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
         <span style="font-size:13px;font-weight:700;color:var(--text-bright);">Top 10 F&amp;O Stocks — CE / PE Buy Recommendations</span>
         <button class="collapse-btn" id="sfp-toggle-all" onclick="toggleAllStockCards()">Collapse all</button>
         <span class="badge low" id="sfp-mode-badge" style="display:none;">MOCK DATA</span>
@@ -1736,6 +1773,14 @@ function renderSignalCard(containerId, index, data) {
         <div class="signal-field"><label>Expiry</label><div class="val" style="font-size:11px">${s.expiry || '—'}</div></div>
         <div class="signal-field"><label>Bias</label><div class="val" style="color:${biasColor(data.technical?.bias)}">${data.technical?.bias || '—'}</div></div>
       </div>
+      <div style="margin-top:10px;padding:7px 10px;border-radius:6px;font-size:11px;line-height:1.5;
+                  background:${action === 'buy' ? 'rgba(0,217,100,0.06)' : action === 'sell' ? 'rgba(255,71,87,0.06)' : 'rgba(255,215,0,0.06)'};
+                  color:var(--text);">
+        ${(s.action && s.action !== 'WAIT')
+          ? `<b>In plain words:</b> ${s.action} ${s.instrument || index} at ${fmtNum(s.entry_price)} — book profit at ${fmtNum(s.target)}, exit if it falls to ${fmtNum(s.stop_loss)}. Confidence: ${s.confidence || 'LOW'}.`
+          : `<b>In plain words:</b> No trade on ${index} right now — indicators are mixed. Wait for a clearer setup.`}
+        ${(s.reasons || []).length ? `<div style="margin-top:4px;color:var(--text-muted);">Why: ${(s.reasons || []).slice(0, 3).join(' · ')}</div>` : ''}
+      </div>
     </div>`;
 }
 
@@ -1743,15 +1788,23 @@ function renderMetricsRow(d) {
   const n = d.nifty || {};
   document.getElementById('m-nifty-pcr').textContent = fmt(n.pcr, 3);
   const pcr = n.pcr || 1;
-  document.getElementById('m-nifty-pcr-sent').textContent = pcr > 1.2 ? '↑ Bullish' : pcr < 0.8 ? '↓ Bearish' : '→ Neutral';
+  document.getElementById('m-nifty-pcr-sent').textContent =
+    pcr > 1.2 ? '↑ Bullish — put writing builds support' :
+    pcr < 0.8 ? '↓ Bearish — call writing caps upside' :
+    '→ Neutral — balanced positioning';
   document.getElementById('m-nifty-mp').textContent = fmtNum(n.max_pain);
-  document.getElementById('m-nifty-dte').textContent = `${n.dte || 0} days to expiry`;
+  document.getElementById('m-nifty-dte').textContent =
+    `${n.dte || 0}d to expiry — price gravitates here near expiry`;
   const em = n.expected_move || {};
   document.getElementById('m-exp-move').textContent = `±${fmt(em.pct_move, 1)}%`;
-  document.getElementById('m-exp-range').textContent = `${fmtNum(em.lower)} – ${fmtNum(em.upper)}`;
+  document.getElementById('m-exp-range').textContent =
+    `Likely range till expiry: ${fmtNum(em.lower)} – ${fmtNum(em.upper)}`;
   const vix = d.indices?.vix?.last_price;
   document.getElementById('m-vix').textContent = fmt(vix, 2);
-  document.getElementById('m-vix-sub').textContent = vix < 13 ? 'Low fear' : vix < 20 ? 'Normal' : 'Elevated fear';
+  document.getElementById('m-vix-sub').textContent =
+    vix < 13 ? 'Low fear — calm, option premiums cheap' :
+    vix < 20 ? 'Normal volatility' :
+    'Elevated fear — expect wide swings';
 }
 
 function renderFiiDii(f) {
@@ -1901,27 +1954,27 @@ async function loadOptionChain() {
           <!-- CE Side -->
           <td style="text-align:right;background:${ceBg}">
             <div style="display:flex;justify-content:flex-end;align-items:center;gap:4px">
-              <span style="font-size:10px;color:#8b949e">${cePctOI}%</span>
+              <span style="font-size:10px;color:var(--text-muted)">${cePctOI}%</span>
               <div style="width:${ceBarW}px;height:8px;background:#ff6b6b;border-radius:2px;opacity:0.8"></div>
             </div>
           </td>
           <td style="text-align:right;background:${ceBg};color:#ff9999;font-size:11px">${cePctOI}%</td>
           <td style="text-align:right;background:${ceBg};font-weight:${ceOI>maxCEOI*0.4?'700':'400'}">${fmtOI(ceOI)}</td>
           <td style="text-align:right;background:${ceBg};color:${chgColor(ceOIChg)};font-size:11px">${ceOIChg>=0?'+':''}${fmtOI(ceOIChg)}</td>
-          <td style="text-align:right;background:${ceBg};color:#8b949e">${fmt(ce.iv,1)}%</td>
-          <td style="text-align:right;background:${ceBg};font-weight:600;color:#e6edf3">${fmt(ce.ltp,2)}</td>
+          <td style="text-align:right;background:${ceBg};color:var(--text-muted)">${fmt(ce.iv,1)}%</td>
+          <td style="text-align:right;background:${ceBg};font-weight:600;color:var(--text)">${fmt(ce.ltp,2)}</td>
           <!-- Strike -->
-          <td class="strike-cell" style="background:#1c2128;font-weight:700;font-size:13px;color:${isATM?'#ffd700':'#e6edf3'}">${row.strike}${isATM?' ★':''}</td>
+          <td class="strike-cell" style="background:var(--bg-card2);font-weight:700;font-size:13px;color:${isATM?'var(--yellow)':'var(--text-bright)'}">${row.strike}${isATM?' ★':''}</td>
           <!-- PE Side -->
-          <td style="background:${peBg};font-weight:600;color:#e6edf3">${fmt(pe.ltp,2)}</td>
-          <td style="background:${peBg};color:#8b949e">${fmt(pe.iv,1)}%</td>
+          <td style="background:${peBg};font-weight:600;color:var(--text)">${fmt(pe.ltp,2)}</td>
+          <td style="background:${peBg};color:var(--text-muted)">${fmt(pe.iv,1)}%</td>
           <td style="background:${peBg};color:${chgColor(peOIChg)};font-size:11px">${peOIChg>=0?'+':''}${fmtOI(peOIChg)}</td>
           <td style="background:${peBg};font-weight:${peOI>maxPEOI*0.4?'700':'400'}">${fmtOI(peOI)}</td>
           <td style="background:${peBg};color:#66d98a;font-size:11px">${pePctOI}%</td>
           <td style="background:${peBg}">
             <div style="display:flex;align-items:center;gap:4px">
               <div style="width:${peBarW}px;height:8px;background:#00d964;border-radius:2px;opacity:0.8"></div>
-              <span style="font-size:10px;color:#8b949e">${pePctOI}%</span>
+              <span style="font-size:10px;color:var(--text-muted)">${pePctOI}%</span>
             </div>
           </td>
         </tr>`;
@@ -1966,14 +2019,15 @@ function setInterval_(interval) {
 function initChart() {
   const container = document.getElementById('chart-container');
   if (chartInstance) { chartInstance.remove(); chartInstance = null; }
+  const lwTheme = chartTheme();
   chartInstance = LightweightCharts.createChart(container, {
     width: container.clientWidth,
     height: 460,
-    layout: { background: { color: '#0d1117' }, textColor: '#c9d1d9' },
-    grid: { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+    layout: { background: { color: lwTheme.bgPrimary }, textColor: lwTheme.textMain },
+    grid: { vertLines: { color: lwTheme.grid }, horzLines: { color: lwTheme.grid } },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: '#21262d' },
-    timeScale: { borderColor: '#21262d', timeVisible: true, secondsVisible: false },
+    rightPriceScale: { borderColor: lwTheme.grid },
+    timeScale: { borderColor: lwTheme.grid, timeVisible: true, secondsVisible: false },
   });
   candleSeriesInstance = chartInstance.addCandlestickSeries({
     upColor: '#00d964', downColor: '#ff4757',
@@ -1995,14 +2049,14 @@ function renderSignalPanel(signals) {
     el = document.createElement('div');
     el.id = 'chart-signal-panel';
     el.style.cssText = `
-      margin-top:12px; padding:10px 14px; background:#161b22;
-      border:1px solid #21262d; border-radius:8px; font-size:12px;
+      margin-top:12px; padding:10px 14px; background:var(--bg-card);
+      border:1px solid var(--border); border-radius:8px; font-size:12px;
     `;
     document.getElementById('chart-container').insertAdjacentElement('afterend', el);
   }
 
   if (!signals.length) {
-    el.innerHTML = '<span style="color:#8b949e">No signals detected for this interval. Try a longer timeframe.</span>';
+    el.innerHTML = '<span style="color:var(--text-muted)">No signals detected for this interval. Try a longer timeframe.</span>';
     return;
   }
 
@@ -2024,26 +2078,26 @@ function renderSignalPanel(signals) {
         <div style="flex:1">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="color:${col};font-weight:700;font-size:13px">${s.type}</span>
-            <span style="color:#8b949e;font-size:11px">${dt}</span>
-            <span style="color:#ffd700;font-size:11px" title="Signal strength">${str}</span>
+            <span style="color:var(--text-muted);font-size:11px">${dt}</span>
+            <span style="color:var(--yellow);font-size:11px" title="Signal strength">${str}</span>
             <span style="color:#e6edf3;font-weight:600">₹${s.price.toFixed(2)}</span>
           </div>
-          <div style="color:#8b949e;font-size:11px;margin-top:2px">${(s.reasons||[]).join(' · ')}</div>
+          <div style="color:var(--text-muted);font-size:11px;margin-top:2px">${(s.reasons||[]).join(' · ')}</div>
         </div>
       </div>`;
   }).join('');
 
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <span style="font-weight:600;color:#e6edf3">📍 Trade Signals on Chart</span>
-      <span style="color:#8b949e;font-size:11px">
-        <span style="color:#00d964">▲ ${buys.length} BUY</span> &nbsp;
+      <span style="font-weight:600;color:var(--text)">📍 Trade Signals on Chart</span>
+      <span style="color:var(--text-muted);font-size:11px">
+        <span style="color:var(--green)">▲ ${buys.length} BUY</span> &nbsp;
         <span style="color:#ff4757">▼ ${sells.length} SELL</span>
         &nbsp;· strength: ●●● Strong &nbsp; ●●○ Moderate
       </span>
     </div>
     ${rows}
-    ${signals.length > 8 ? `<div style="color:#8b949e;font-size:11px;margin-top:4px">Showing latest 8 of ${signals.length} signals</div>` : ''}
+    ${signals.length > 8 ? `<div style="color:var(--text-muted);font-size:11px;margin-top:4px">Showing latest 8 of ${signals.length} signals</div>` : ''}
   `;
 }
 
@@ -2549,12 +2603,12 @@ async function loadGEX(idx) {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { labels: { color:'#c9d1d9', font:{size:11} } },
+          legend: { labels: { color: chartTheme().textMain, font:{size:11} } },
           tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.raw?.toFixed(2)} Cr` } }
         },
         scales: {
-          x: { stacked:true, ticks:{color:'#6e7681',font:{size:10},maxRotation:45}, grid:{color:'rgba(33,38,45,.5)'} },
-          y: { stacked:true, ticks:{color:'#6e7681', callback: v => v+'Cr'}, grid:{color:'rgba(33,38,45,.5)'} }
+          x: { stacked:true, ticks:{color: chartTheme().text,font:{size:10},maxRotation:45}, grid:{color:'rgba(33,38,45,.5)'} },
+          y: { stacked:true, ticks:{color: chartTheme().text, callback: v => v+'Cr'}, grid:{color:'rgba(33,38,45,.5)'} }
         }
       }
     });
@@ -2679,12 +2733,12 @@ async function loadIVSurface(idx) {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { labels: { color:'#c9d1d9', font:{size:11} } },
+          legend: { labels: { color: chartTheme().textMain, font:{size:11} } },
           tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.raw}%` } }
         },
         scales: {
-          x: { ticks:{color:'#6e7681',font:{size:10},maxRotation:45,maxTicksLimit:12}, grid:{color:'rgba(33,38,45,.5)'} },
-          y: { ticks:{color:'#6e7681', callback: v=>v+'%'}, grid:{color:'rgba(33,38,45,.5)'} }
+          x: { ticks:{color: chartTheme().text,font:{size:10},maxRotation:45,maxTicksLimit:12}, grid:{color:'rgba(33,38,45,.5)'} },
+          y: { ticks:{color: chartTheme().text, callback: v=>v+'%'}, grid:{color:'rgba(33,38,45,.5)'} }
         }
       }
     });
@@ -2801,7 +2855,7 @@ async function loadPayoff() {
         maintainAspectRatio: false,
         interaction: { intersect: false, mode: 'index' },
         plugins: {
-          legend: { labels: { color:'#c9d1d9', font:{size:11}, filter: i => i.datasetIndex < 2 } },
+          legend: { labels: { color: chartTheme().textMain, font:{size:11}, filter: i => i.datasetIndex < 2 } },
           tooltip: {
             callbacks: {
               label: c => {
@@ -2814,13 +2868,13 @@ async function loadPayoff() {
         },
         scales: {
           x: {
-            ticks: { color:'#6e7681', font:{size:9}, maxTicksLimit:12,
+            ticks: { color: chartTheme().text, font:{size:9}, maxTicksLimit:12,
               callback: (v,i) => pts[i] ? Math.round(pts[i].price).toLocaleString('en-IN') : ''
             },
             grid: { color:'rgba(33,38,45,.5)' }
           },
           y: {
-            ticks: { color:'#6e7681', callback: v => '₹'+(v/1000).toFixed(0)+'K' },
+            ticks: { color: chartTheme().text, callback: v => '₹'+(v/1000).toFixed(0)+'K' },
             grid: { color:'rgba(33,38,45,.5)' }
           }
         }
@@ -2927,16 +2981,61 @@ async function loadCalendar() {
 // ============================================================
 // Algo Signals
 // ============================================================
-async function loadAlgo() {
+let algoAutoOn      = true;
+let algoPrevSignals = {};   // last seen signal per index
+let algoChangeInfo  = {};   // {NIFTY: {from, to, time}} — shown as a banner
+
+function toggleAlgoAuto() {
+  algoAutoOn = !algoAutoOn;
+  const btn = document.getElementById('algo-auto-btn');
+  if (btn) {
+    btn.textContent = algoAutoOn ? '⏸ Auto 30s' : '▶ Paused';
+    btn.classList.toggle('active', algoAutoOn);
+  }
+}
+
+// Auto-refresh while the Algo tab is open — the market moves, so do the signals
+setInterval(() => {
+  if (algoAutoOn && state.tab === 'algo') loadAlgo(true);
+}, 30000);
+
+async function loadAlgo(silent = false) {
   const el = document.getElementById('algo-content');
   const sp = document.getElementById('algo-spinner');
-  el.innerHTML = '<div class="loading-overlay"><div class="spinner"></div>&nbsp;Computing signals…</div>';
+  if (!silent) el.innerHTML = '<div class="loading-overlay"><div class="spinner"></div>&nbsp;Computing signals…</div>';
   if (sp) sp.style.display = 'inline-block';
   try {
     const data = await fetch('/api/algo-signals').then(r => r.json());
+
+    // Detect signal changes caused by market movement
+    ['NIFTY','SENSEX'].forEach(idx => {
+      const sig  = data[idx]?.signal;
+      const prev = algoPrevSignals[idx];
+      if (prev && sig && sig !== 'NO DATA' && sig !== 'ERROR' && prev !== sig) {
+        algoChangeInfo[idx] = { from: prev, to: sig, time: new Date().toLocaleTimeString('en-IN', { hour12: false }) };
+        showToast(`${idx} algo signal changed: ${prev} → ${sig}`, sig.includes('BUY') ? 'success' : 'error');
+      }
+      if (sig && sig !== 'NO DATA' && sig !== 'ERROR') algoPrevSignals[idx] = sig;
+    });
+
+    // Preserve collapsed state across re-renders
+    const collapsed = new Set(
+      [...el.querySelectorAll('.algo-index-block.collapsed .algo-index-name')].map(n => n.textContent)
+    );
     el.innerHTML = ['NIFTY','SENSEX'].map(idx => renderAlgoBlock(data[idx], idx)).join('');
+    el.querySelectorAll('.algo-index-block').forEach(b => {
+      const name = b.querySelector('.algo-index-name')?.textContent;
+      if (collapsed.has(name)) {
+        b.classList.add('collapsed');
+        const cb = b.querySelector('.collapse-btn');
+        if (cb) cb.textContent = '▸';
+      }
+    });
+
+    const upd = document.getElementById('algo-updated');
+    if (upd) upd.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
   } catch(e) {
-    el.innerHTML = `<div style="color:var(--red);padding:20px">Error: ${e.message}</div>`;
+    if (!silent) el.innerHTML = `<div style="color:var(--red);padding:20px">Error: ${e.message}</div>`;
   }
   if (sp) sp.style.display = 'none';
 }
@@ -2969,6 +3068,14 @@ function renderAlgoBlock(d, idx) {
       <span class="algo-spot" style="color:${isBuy?'var(--green)':isSell?'var(--red)':'var(--text-bright)'}">₹${spot}</span>
       <button class="collapse-btn" onclick="toggleCardCollapse(this)" title="Collapse / expand">▾</button>
     </div>
+
+    ${algoChangeInfo[idx] ? `
+    <div style="margin:10px 20px 0;padding:7px 12px;border-radius:6px;font-size:12px;
+                background:rgba(255,215,0,0.07);border:1px solid rgba(255,215,0,0.35);color:var(--text);">
+      ⚡ Market moved — signal changed from <b>${algoChangeInfo[idx].from}</b> to
+      <b style="color:${algoChangeInfo[idx].to.includes('BUY') ? 'var(--green)' : algoChangeInfo[idx].to.includes('SELL') ? 'var(--red)' : 'var(--yellow)'}">${algoChangeInfo[idx].to}</b>
+      at ${algoChangeInfo[idx].time}
+    </div>` : ''}
 
     <div class="collapse-body">
     <!-- Indicator chips -->
@@ -3220,7 +3327,7 @@ async function loadOIHistory() {
 
   document.getElementById('oih-status').textContent = 'Loading…';
   document.getElementById('oih-daily-body').innerHTML =
-    '<tr><td colspan="13" style="text-align:center;color:#8b949e;padding:30px">Loading…</td></tr>';
+    '<tr><td colspan="13" style="text-align:center;color:var(--text-muted);padding:30px">Loading…</td></tr>';
 
   try {
     const r = await fetch(`/api/option-chain-history/${index}?expiry=${expiry}&days=${days}`);
@@ -3264,7 +3371,7 @@ function renderOIHistory(data) {
   // Daily table
   const tbody = document.getElementById('oih-daily-body');
   if (!data.history || !data.history.length) {
-    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;color:#8b949e;padding:20px">No data</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;color:var(--text-muted);padding:20px">No data</td></tr>';
     return;
   }
 
@@ -3278,19 +3385,19 @@ function renderOIHistory(data) {
     const topPE = (row.top_pe_strikes || []).map(s => s.strike).slice(0,3).join(', ') || '—';
 
     return `<tr style="cursor:pointer" onclick="showDayChain(${i})" title="Click to see strike-wise OI">
-      <td style="text-align:left;font-weight:500;color:#58a6ff">${row.display_date}</td>
+      <td style="text-align:left;font-weight:500;color:var(--blue)">${row.display_date}</td>
       <td>${row.spot?.toFixed(2)}</td>
-      <td style="color:#ffd700">${row.atm}</td>
+      <td style="color:var(--yellow)">${row.atm}</td>
       <td>${row.dte}</td>
       <td>${row.atm_iv?.toFixed(1)}%</td>
       <td style="color:${pcrColor};font-weight:600">${row.pcr_oi?.toFixed(3)}</td>
       <td style="color:${sentColor}">${row.pcr_sentiment}</td>
-      <td style="color:#ffd700">${row.max_pain}</td>
+      <td style="color:var(--yellow)">${row.max_pain}</td>
       <td style="color:${mpColor}">${mpDiff > 0 ? '+' : ''}${mpDiff.toFixed(0)}</td>
       <td style="color:#ff6b6b">${(row.total_ce_oi/1e7).toFixed(2)}Cr</td>
-      <td style="color:#00d964">${(row.total_pe_oi/1e7).toFixed(2)}Cr</td>
+      <td style="color:var(--green)">${(row.total_pe_oi/1e7).toFixed(2)}Cr</td>
       <td style="color:#ff6b6b;font-size:11px">${topCE}</td>
-      <td style="color:#00d964;font-size:11px">${topPE}</td>
+      <td style="color:var(--green);font-size:11px">${topPE}</td>
     </tr>`;
   }).join('');
 }
@@ -3306,13 +3413,13 @@ function showDayChain(index) {
 
   const tbody = document.getElementById('oih-chain-body');
   if (!chain.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b949e;padding:20px">No chain data</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No chain data</td></tr>';
     return;
   }
 
   tbody.innerHTML = chain.map(r => {
     const isATM = r.strike === atm;
-    const bg    = isATM ? 'background:#1c2128' : '';
+    const bg    = isATM ? 'background:var(--bg-card2)' : '';
     const ce    = r.CE || {};
     const pe    = r.PE || {};
     const ceChgColor = (ce.oi_change || 0) > 0 ? '#00d964' : '#ff4757';
@@ -3323,11 +3430,11 @@ function showDayChain(index) {
       <td style="color:${ceChgColor};font-size:11px">${(ce.oi_change||0) > 0 ? '+' : ''}${(ce.oi_change||0).toLocaleString()}</td>
       <td>${ce.iv?.toFixed(1)||'—'}%</td>
       <td style="color:#e6edf3">${ce.ltp?.toFixed(2)||'—'}</td>
-      <td style="background:#161b22;color:#ffd700;font-weight:700;font-size:13px">${r.strike}</td>
+      <td style="background:var(--bg-card);color:var(--yellow);font-weight:700;font-size:13px">${r.strike}</td>
       <td style="color:#e6edf3">${pe.ltp?.toFixed(2)||'—'}</td>
       <td>${pe.iv?.toFixed(1)||'—'}%</td>
       <td style="color:${peChgColor};font-size:11px">${(pe.oi_change||0) > 0 ? '+' : ''}${(pe.oi_change||0).toLocaleString()}</td>
-      <td style="color:#00d964">${(pe.oi||0).toLocaleString()}</td>
+      <td style="color:var(--green)">${(pe.oi||0).toLocaleString()}</td>
     </tr>`;
   }).join('');
 
@@ -3413,6 +3520,10 @@ function showToast(msg, type='success') {
 // Init & Polling
 // ============================================================
 (async function init() {
+  // Theme button icon reflects the saved theme
+  const themeBtn = document.getElementById('theme-btn');
+  if (themeBtn) themeBtn.textContent = (localStorage.getItem('fo-theme') || 'dark') === 'light' ? '🌙' : '☀️';
+
   // Fetch runtime config (host, env) from server
   try {
     const cfg = await fetch('/api/config').then(r => r.json());
@@ -3485,6 +3596,25 @@ let soiPCRChart      = null;
 let soiLWChart       = null;
 let soiCandleSeries  = null;
 let soiVolumeSeries  = null;
+let soiTimeToIdx     = {};
+
+// Highlight the same time point on the OI + PCR charts (crosshair sync)
+function highlightSOICharts(i) {
+  [soiOIChart, soiPCRChart].forEach(ch => {
+    if (!ch) return;
+    try {
+      if (i == null || i < 0 || i >= ch.data.labels.length) {
+        ch.setActiveElements([]);
+        ch.tooltip.setActiveElements([], { x: 0, y: 0 });
+      } else {
+        const actives = ch.data.datasets.map((_, di) => ({ datasetIndex: di, index: i }));
+        ch.setActiveElements(actives);
+        ch.tooltip.setActiveElements(actives, { x: 0, y: 0 });
+      }
+      ch.update('none');
+    } catch (e) {}
+  });
+}
 
 function setSOIIndex(idx) {
   soiIndexState = idx;
@@ -3544,25 +3674,38 @@ async function loadSmartOI() {
     // ── Candlestick price chart (LightweightCharts) ──────────────────────
     const priceEl = document.getElementById('soi-price-chart');
     if (!soiLWChart) {
+      const soiTheme = chartTheme();
       soiLWChart = LightweightCharts.createChart(priceEl, {
-        layout:   { background: { color: '#161b22' }, textColor: '#8b949e' },
-        grid:     { vertLines: { color: '#21262d' }, horzLines: { color: '#21262d' } },
+        layout:   { background: { color: soiTheme.bg }, textColor: soiTheme.text },
+        grid:     { vertLines: { color: soiTheme.grid }, horzLines: { color: soiTheme.grid } },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#30363d' },
-        timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+        rightPriceScale: { borderColor: soiTheme.border },
+        timeScale: { borderColor: soiTheme.border, timeVisible: true, secondsVisible: false },
         width:  priceEl.clientWidth  || 500,
         height: priceEl.clientHeight || 460,
       });
-      soiCandleSeries = soiLWChart.addCandlestickSeries({
-        upColor: '#00d964', downColor: '#ff4757',
-        borderUpColor: '#00d964', borderDownColor: '#ff4757',
-        wickUpColor: '#00d964', wickDownColor: '#ff4757',
+      // Price LINE chart in the upper area
+      soiCandleSeries = soiLWChart.addAreaSeries({
+        lineColor: '#3b82f6',
+        topColor: 'rgba(59,130,246,0.22)',
+        bottomColor: 'rgba(59,130,246,0.02)',
+        lineWidth: 2,
+        crosshairMarkerVisible: true,
       });
+      // Volume BAR chart pinned to the bottom of the same chart
       soiVolumeSeries = soiLWChart.addHistogramSeries({
         priceFormat: { type: 'volume' },
         priceScaleId: 'vol',
-        scaleMargins: { top: 0.82, bottom: 0 },
       });
+      soiLWChart.priceScale('right').applyOptions({ scaleMargins: { top: 0.06, bottom: 0.28 } });
+      soiLWChart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.74, bottom: 0 } });
+
+      // Hovering the price chart highlights the same time on the OI + PCR charts
+      soiLWChart.subscribeCrosshairMove(param => {
+        const i = (param && param.time != null) ? soiTimeToIdx[param.time] : undefined;
+        highlightSOICharts(i);
+      });
+
       // Resize observer
       new ResizeObserver(() => {
         if (soiLWChart && priceEl.clientWidth > 0)
@@ -3571,12 +3714,14 @@ async function loadSmartOI() {
     }
 
     soiCandleSeries.setData(d.candles.map(c => ({
-      time: c.timestamp, open: c.open, high: c.high, low: c.low, close: c.close,
+      time: c.timestamp, value: c.close,
     })));
     soiVolumeSeries.setData(d.candles.map(c => ({
       time: c.timestamp, value: c.volume,
-      color: c.close >= c.open ? 'rgba(0,217,100,0.35)' : 'rgba(255,71,87,0.35)',
+      color: c.close >= c.open ? 'rgba(0,217,100,0.45)' : 'rgba(255,71,87,0.45)',
     })));
+    soiTimeToIdx = {};
+    d.candles.forEach((c, i) => { soiTimeToIdx[c.timestamp] = i; });
     soiLWChart.timeScale().fitContent();
 
     // ── OI Line Chart (Chart.js) ──────────────────────────────────────────
@@ -3591,19 +3736,22 @@ async function loadSmartOI() {
             label: 'Put OI',
             data: d.oi_series.map(r => r.pe_oi),
             borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.06)',
-            borderWidth: 1.8, pointRadius: 0, tension: 0.4, fill: false,
+            borderWidth: 1.8, pointRadius: 0, pointHoverRadius: 5,
+            pointHoverBackgroundColor: '#f97316', tension: 0.4, fill: false,
           },
           {
             label: 'Call OI',
             data: d.oi_series.map(r => r.ce_oi),
             borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.06)',
-            borderWidth: 1.8, pointRadius: 0, tension: 0.4, fill: false,
+            borderWidth: 1.8, pointRadius: 0, pointHoverRadius: 5,
+            pointHoverBackgroundColor: '#3b82f6', tension: 0.4, fill: false,
           },
           {
             label: 'FE-CE',
             data: d.oi_series.map(r => r.net_oi),
             borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.06)',
-            borderWidth: 1.8, pointRadius: 0, tension: 0.4, fill: false,
+            borderWidth: 1.8, pointRadius: 0, pointHoverRadius: 5,
+            pointHoverBackgroundColor: '#10b981', tension: 0.4, fill: false,
           },
         ],
       },
@@ -3622,13 +3770,13 @@ async function loadSmartOI() {
         },
         scales: {
           x: {
-            ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 10, maxRotation: 0 },
-            grid:  { color: '#21262d' },
+            ticks: { color: chartTheme().text, font: { size: 9 }, maxTicksLimit: 10, maxRotation: 0 },
+            grid:  { color: chartTheme().grid },
           },
           y: {
             position: 'right',
-            ticks: { color: '#8b949e', font: { size: 9 }, callback: v => v.toFixed(1) + 'L' },
-            grid:  { color: '#21262d' },
+            ticks: { color: chartTheme().text, font: { size: 9 }, callback: v => v.toFixed(1) + 'L' },
+            grid:  { color: chartTheme().grid },
           },
         },
       },
@@ -3645,7 +3793,8 @@ async function loadSmartOI() {
           label: 'PCR',
           data: d.pcr_series.map(r => r.pcr),
           borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.08)',
-          borderWidth: 1.8, pointRadius: 0, tension: 0.4, fill: true,
+          borderWidth: 1.8, pointRadius: 0, pointHoverRadius: 5,
+          pointHoverBackgroundColor: '#a78bfa', tension: 0.4, fill: true,
         }],
       },
       options: {
@@ -3658,13 +3807,13 @@ async function loadSmartOI() {
         },
         scales: {
           x: {
-            ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 8, maxRotation: 0 },
-            grid:  { color: '#21262d' },
+            ticks: { color: chartTheme().text, font: { size: 9 }, maxTicksLimit: 8, maxRotation: 0 },
+            grid:  { color: chartTheme().grid },
           },
           y: {
             position: 'right',
-            ticks: { color: '#8b949e', font: { size: 9 }, callback: v => v.toFixed(2) },
-            grid:  { color: '#21262d' },
+            ticks: { color: chartTheme().text, font: { size: 9 }, callback: v => v.toFixed(2) },
+            grid:  { color: chartTheme().grid },
           },
         },
       },
@@ -3673,6 +3822,44 @@ async function loadSmartOI() {
   } catch(e) {
     console.error('Smart OI error:', e);
   }
+}
+
+// ============================================================
+// Theme (dark / light)
+// ============================================================
+function chartTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  return {
+    bgPrimary: cs.getPropertyValue('--bg-primary').trim(),
+    bg:        cs.getPropertyValue('--bg-card').trim(),
+    grid:      cs.getPropertyValue('--border').trim(),
+    border:    cs.getPropertyValue('--border-light').trim(),
+    text:      cs.getPropertyValue('--text-muted').trim(),
+    textMain:  cs.getPropertyValue('--text').trim(),
+  };
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('fo-theme', theme);
+  const btn = document.getElementById('theme-btn');
+  if (btn) btn.textContent = theme === 'light' ? '🌙' : '☀️';
+  refreshChartsForTheme();
+}
+
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+}
+
+function refreshChartsForTheme() {
+  // Persistent LightweightCharts keep their creation-time colors —
+  // destroy them so the active tab recreates them with new theme colors.
+  try { if (chartInstance) { chartInstance.remove(); chartInstance = null; candleSeriesInstance = null; } } catch(e) {}
+  try {
+    if (soiLWChart) { soiLWChart.remove(); soiLWChart = null; soiCandleSeries = null; soiVolumeSeries = null; }
+  } catch(e) {}
+  try { switchTab(state.tab || 'dashboard'); } catch(e) {}
 }
 
 // ============================================================
