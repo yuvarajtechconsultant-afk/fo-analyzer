@@ -1349,6 +1349,37 @@
         </div>
       </div>
 
+      <!-- Position Sizing Calculator -->
+      <div class="card collapsible-card" id="possize-card" style="margin-bottom:12px;">
+        <div class="signal-header" style="margin-bottom:0;">
+          <div class="card-title" style="margin:0;">🧮 Position Sizing Calculator <span style="font-size:11px;font-weight:400;color:var(--text-muted)">— size the trade before you pick the strike</span></div>
+          <button class="collapse-btn" onclick="toggleCardCollapse(this)" title="Collapse / expand">▾</button>
+        </div>
+        <div class="collapse-body" style="margin-top:10px;">
+          <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
+            <label style="font-size:11px;color:var(--text-muted);">Capital (₹)<br>
+              <input id="ps-capital" type="number" value="100000" oninput="calcPositionSize()"
+                style="margin-top:3px;width:120px;background:var(--bg-card2);color:var(--text);border:1px solid var(--border-light);border-radius:5px;padding:6px 8px;font-family:var(--font-mono);"></label>
+            <label style="font-size:11px;color:var(--text-muted);">Risk per trade (%)<br>
+              <input id="ps-risk" type="number" value="2" step="0.5" oninput="calcPositionSize()"
+                style="margin-top:3px;width:90px;background:var(--bg-card2);color:var(--text);border:1px solid var(--border-light);border-radius:5px;padding:6px 8px;font-family:var(--font-mono);"></label>
+            <label style="font-size:11px;color:var(--text-muted);">Entry premium (₹)<br>
+              <input id="ps-entry" type="number" value="100" oninput="calcPositionSize()"
+                style="margin-top:3px;width:100px;background:var(--bg-card2);color:var(--text);border:1px solid var(--border-light);border-radius:5px;padding:6px 8px;font-family:var(--font-mono);"></label>
+            <label style="font-size:11px;color:var(--text-muted);">Stop-loss (₹)<br>
+              <input id="ps-sl" type="number" value="70" oninput="calcPositionSize()"
+                style="margin-top:3px;width:100px;background:var(--bg-card2);color:var(--text);border:1px solid var(--border-light);border-radius:5px;padding:6px 8px;font-family:var(--font-mono);"></label>
+            <label style="font-size:11px;color:var(--text-muted);">Lot size<br>
+              <input id="ps-lot" type="number" value="65" oninput="calcPositionSize()"
+                style="margin-top:3px;width:80px;background:var(--bg-card2);color:var(--text);border:1px solid var(--border-light);border-radius:5px;padding:6px 8px;font-family:var(--font-mono);"></label>
+          </div>
+          <div id="ps-result" class="grid-4 mt-3" style="gap:10px;"></div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:8px;line-height:1.5;">
+            Lots = (Capital × Risk%) ÷ (per-lot risk). Each Algo card has a <b>Size it</b> button that fills entry / SL / lot here.
+          </div>
+        </div>
+      </div>
+
       <div id="algo-content">
         <div class="loading-overlay"><div class="spinner"></div>&nbsp;Computing signals…</div>
       </div>
@@ -1631,7 +1662,7 @@ function switchTab(tab) {
   if (tab === 'signals')      loadSignals();
   if (tab === 'positions')    loadPositions();
   if (tab === 'oi-history')   initOIHistoryTab();
-  if (tab === 'algo')         loadAlgo();
+  if (tab === 'algo')       { loadAlgo(); calcPositionSize(); }
   if (tab === 'advanced')     loadAdvanced();
   if (tab === 'smart-oi')    { populateSOIExpiry(); loadSmartOI(); }
   if (tab === 'stock-picks')  loadStockPicks();
@@ -3183,6 +3214,59 @@ function renderAlgoBlock(d, idx) {
   </div>`;
 }
 
+// ── Position Sizing Calculator ──────────────────────────────
+function calcPositionSize() {
+  const capital = parseFloat(document.getElementById('ps-capital').value) || 0;
+  const riskPct = parseFloat(document.getElementById('ps-risk').value) || 0;
+  const entry   = parseFloat(document.getElementById('ps-entry').value) || 0;
+  const sl      = parseFloat(document.getElementById('ps-sl').value) || 0;
+  const lot     = parseFloat(document.getElementById('ps-lot').value) || 0;
+  const out = document.getElementById('ps-result');
+  if (!out) return;
+
+  const riskPerUnit = entry - sl;
+  if (capital <= 0 || riskPct <= 0 || riskPerUnit <= 0 || lot <= 0) {
+    out.innerHTML = `<div class="metric-card" style="grid-column:1/-1;color:var(--yellow);font-size:12px;">Enter capital, risk %, entry > stop-loss, and lot size.</div>`;
+    return;
+  }
+  const maxRisk     = capital * riskPct / 100;
+  const riskPerLot  = riskPerUnit * lot;
+  const lots        = Math.floor(maxRisk / riskPerLot);
+  const deployed    = lots * entry * lot;
+  const actualRisk  = lots * riskPerLot;
+  const overCapital = deployed > capital;
+
+  const card = (label, val, sub, color) => `
+    <div class="metric-card">
+      <div class="metric-label">${label}</div>
+      <div class="metric-value" style="${color ? 'color:' + color : ''}">${val}</div>
+      <div class="metric-sub">${sub}</div>
+    </div>`;
+
+  out.innerHTML =
+    card('Lots to Buy', lots > 0 ? lots : 0,
+         lots > 0 ? `${lots * lot} qty` : 'risk too tight for 1 lot',
+         lots > 0 ? 'var(--green)' : 'var(--red)') +
+    card('Capital Needed', '₹' + fmtNum(Math.round(deployed)),
+         overCapital ? '⚠ exceeds capital' : 'premium outlay',
+         overCapital ? 'var(--red)' : '') +
+    card('Actual Risk', '₹' + fmtNum(Math.round(actualRisk)),
+         `${capital ? (actualRisk / capital * 100).toFixed(2) : 0}% of capital`, 'var(--red)') +
+    card('Risk / Lot', '₹' + fmtNum(Math.round(riskPerLot)),
+         `₹${fmt(riskPerUnit,1)} × ${lot}`, '');
+}
+
+function sizeAlgoTrade(entry, sl, lot) {
+  document.getElementById('ps-entry').value = entry;
+  document.getElementById('ps-sl').value = sl;
+  document.getElementById('ps-lot').value = lot;
+  document.getElementById('possize-card').classList.remove('collapsed');
+  const cb = document.querySelector('#possize-card .collapse-btn');
+  if (cb) cb.textContent = '▾';
+  calcPositionSize();
+  document.getElementById('possize-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function renderThetaClock(tc) {
   if (!tc) return '';
   const map = {
@@ -3280,6 +3364,10 @@ function renderAlgoLeg(leg, type) {
           <button class="algo-order-btn buy"
             onclick="placeAlgoOrder(${JSON.stringify(leg).replace(/"/g,'&quot;')})">
             🟢 ${leg.action} @ ₹${leg.entry}
+          </button>
+          <button class="collapse-btn" style="padding:6px 12px;"
+            onclick="sizeAlgoTrade(${buyAt}, ${sl}, ${leg.lot_size})" title="Send to position sizing calculator">
+            🧮 Size it
           </button>
         </div>
       </div>`;

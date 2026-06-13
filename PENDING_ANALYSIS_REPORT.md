@@ -66,7 +66,7 @@
 | 3.1 | **Index intraday VWAP** ✅ ADDED 12 Jun 2026 | Algo rule ±1 + Key Levels chip (price vs VWAP → CE/PE bias). | Low |
 | 3.2 | **Theta-decay clock** ✅ ADDED 12 Jun 2026 | Algo banner OK/CAUTION/AVOID by IST time + expiry proximity (when not to buy). | Low |
 | 3.3 | **Trailing stop-loss plan** ✅ ADDED 12 Jun 2026 | Algo leg shows +20%→cost, +40%→+20%, +60%→+35% trail ladder. | Low |
-| 3.4 | **Position sizing calculator** | Capital → max 2-3% risk per trade → lots to buy. Experts size first, pick strike second. | Low |
+| 3.4 | **Position sizing calculator** ✅ ADDED 13 Jun 2026 | Algo tab: capital + risk% + entry/SL/lot → lots to buy, capital needed, actual risk; "Size it" button on each trade card. | Low |
 | 3.5 | **VIX trend (not just level)** | Rising VIX + falling market → PE premiums expand (buy PE early); falling VIX kills CE buys even in uptrend. | Low |
 | 3.6 | **Max-pain drift / expiry pinning** | Track max pain daily; price pinning toward max pain on expiry week → avoid directional buys near expiry. | Low |
 | 3.7 | **Intraday OI shift alerts** | Writers migrating strikes (e.g. 22500 CE OI unwinding + 22600 CE building = upside breakout). Smart OI shows snapshots; needs change-rate + alert. | Medium |

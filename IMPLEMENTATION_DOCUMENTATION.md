@@ -115,6 +115,8 @@ Recomputed from **live market data** on every call: spot from the live quote (ma
 
 **Trailing stop-loss ladder:** each leg carries a 3-step trail — at +20% move SL to cost (risk-free), at +40% trail to +20%, at +60% trail to +35% and ride the rest.
 
+**Position-sizing calculator:** a panel at the top of the Algo tab — enter capital, risk % per trade, entry premium, stop-loss, lot size → outputs lots to buy, capital needed, actual ₹ risk (and % of capital), and risk per lot. Formula: `lots = floor((capital × risk%) ÷ ((entry − SL) × lot_size))`. Each trade card has a **🧮 Size it** button that pre-fills the calculator from that trade.
+
 **Recommendation — option BUYING only (no short/futures-style legs):**
 - STRONG BUY → single **BUY ATM CE** card · target +60% / SL −30% (R:R exactly 1:2)
 - STRONG SELL → single **BUY ATM PE** card · same R:R
