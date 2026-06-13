@@ -710,9 +710,26 @@ async def option_chain_history(index: str, expiry: Optional[str] = None, days: i
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _estimate_fo_charges(buy_value: float, sell_value: float, orders: int = 2) -> float:
+    """
+    Estimated round-trip charges for an F&O options trade (Zerodha):
+    brokerage ₹20/executed order, STT 0.1% on sell premium, exchange txn
+    ~0.03503% on premium turnover, 18% GST on (brokerage+txn+SEBI),
+    SEBI ₹10/crore, stamp duty 0.003% on buy premium.
+    """
+    turnover  = buy_value + sell_value
+    brokerage = 20.0 * orders
+    txn       = turnover * 0.0003503
+    sebi      = turnover * 0.000001
+    gst       = 0.18 * (brokerage + txn + sebi)
+    stt       = sell_value * 0.001
+    stamp     = buy_value * 0.00003
+    return round(brokerage + txn + sebi + gst + stt + stamp, 2)
+
+
 @app.get("/api/positions")
 async def positions():
-    """Get open positions and orders."""
+    """Get open positions and orders, with estimated charges and net P&L."""
     client = get_client()
     if not client.is_authenticated():
         return {"net": [], "day": [], "orders": [], "authenticated": False}
@@ -720,12 +737,38 @@ async def positions():
     try:
         pos = client.get_positions()
         orders = client.get_orders()
-        return {
-            "net": pos.get("net", []),
+
+        net = pos.get("net", [])
+        total_pnl = total_charges = 0.0
+        for p in net:
+            qty    = p.get("quantity", 0) or 0
+            ltp    = p.get("last_price", 0) or 0
+            buy_v  = p.get("buy_value", 0) or 0
+            sell_v = p.get("sell_value", 0) or 0
+            # Position still open — assume the exit happens at LTP so the
+            # estimate covers the full round trip.
+            if qty > 0:
+                sell_v += ltp * qty
+            elif qty < 0:
+                buy_v += ltp * abs(qty)
+            charges = _estimate_fo_charges(buy_v, sell_v)
+            pnl = p.get("pnl", 0) or 0
+            p["est_charges"] = charges
+            p["net_pnl"]     = round(pnl - charges, 2)
+            total_pnl     += pnl
+            total_charges += charges
+
+        return sanitize({
+            "net": net,
             "day": pos.get("day", []),
             "orders": orders,
+            "summary": {
+                "total_pnl":     round(total_pnl, 2),
+                "total_charges": round(total_charges, 2),
+                "total_net_pnl": round(total_pnl - total_charges, 2),
+            },
             "authenticated": True,
-        }
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -925,6 +968,11 @@ def _build_nfo_symbol(index: str, expiry_date, strike: int, opt_type: str) -> st
     return f"{name}{yy}{mon}{day}{strike}{opt_type.upper()}"
 
 
+# Per-index signal state: locks the trade plan (entry/target/SL) at the
+# moment a signal fires, so prices don't drift on every refresh.
+_algo_signal_state: Dict[str, Dict[str, Any]] = {}
+
+
 @app.get("/api/algo-signals")
 async def algo_signals():
     """
@@ -962,6 +1010,50 @@ async def algo_signals():
                     spot = float(live_px)
             except Exception:
                 pass
+
+            # ── Key levels: CPR/Pivots, PDH/PDL, Gap, Opening Range ──
+            levels: Dict[str, Any] = {}
+            try:
+                df_day = _get_historical_df(index, "day", 15)
+                if len(df_day) >= 2:
+                    last_is_today = df_day.index[-1].date() == date.today()
+                    prev_row = df_day.iloc[-2] if last_is_today else df_day.iloc[-1]
+                    ph, pl_, pc = float(prev_row["high"]), float(prev_row["low"]), float(prev_row["close"])
+                    pivot = (ph + pl_ + pc) / 3
+                    bc    = (ph + pl_) / 2
+                    tc    = 2 * pivot - bc
+                    cpr_lo, cpr_hi = min(bc, tc), max(bc, tc)
+                    cpr_width_pct  = (cpr_hi - cpr_lo) / pc * 100
+                    levels.update({
+                        "pivot": round(pivot, 2),
+                        "cpr_low": round(cpr_lo, 2), "cpr_high": round(cpr_hi, 2),
+                        "cpr_width_pct": round(cpr_width_pct, 3),
+                        "narrow_cpr": cpr_width_pct < 0.25,
+                        "r1": round(2 * pivot - pl_, 2), "s1": round(2 * pivot - ph, 2),
+                        "r2": round(pivot + (ph - pl_), 2), "s2": round(pivot - (ph - pl_), 2),
+                        "pdh": round(ph, 2), "pdl": round(pl_, 2), "pdc": round(pc, 2),
+                    })
+                # Today's open + opening range (first 30 min) from intraday candles
+                today_rows = df[df.index.date == date.today()]
+                if not today_rows.empty:
+                    today_open = float(today_rows["open"].iloc[0])
+                    if levels.get("pdc"):
+                        levels["gap_pct"] = round((today_open - levels["pdc"]) / levels["pdc"] * 100, 2)
+                    orb = today_rows.between_time("09:15", "09:45")
+                    if not orb.empty:
+                        levels["orb_high"] = round(float(orb["high"].max()), 2)
+                        levels["orb_low"]  = round(float(orb["low"].min()), 2)
+                    # Intraday VWAP (resets each day) — anchor for CE/PE bias
+                    if "volume" in today_rows.columns and today_rows["volume"].sum() > 0:
+                        from analysis.technical import calculate_vwap
+                        vwap_series = calculate_vwap(
+                            today_rows["high"], today_rows["low"],
+                            today_rows["close"], today_rows["volume"],
+                        )
+                        if not vwap_series.empty:
+                            levels["vwap"] = round(float(vwap_series.iloc[-1]), 2)
+            except Exception as lvl_err:
+                logger.warning("Key levels failed for %s: %s", index, lvl_err)
 
             # ── Indicators ──────────────────────────────────────
             ema9   = calculate_ema(close, 9)
@@ -1095,6 +1187,56 @@ async def algo_signals():
             if spot <= bb_lower:
                 score_buy += 1; reasons_buy.append("Price at BB lower band — oversold bounce likely")
 
+            # 8. Opening Range Breakout (first 30 min)
+            if levels.get("orb_high") and levels.get("orb_low"):
+                if spot > levels["orb_high"]:
+                    score_buy += 2
+                    reasons_buy.append(f"ORB breakout — price above opening range high {levels['orb_high']:,.0f}")
+                elif spot < levels["orb_low"]:
+                    score_sell += 2
+                    reasons_sell.append(f"ORB breakdown — price below opening range low {levels['orb_low']:,.0f}")
+
+            # 9. CPR / Pivot position
+            if levels.get("pivot"):
+                if spot > levels["cpr_high"]:
+                    score_buy += 1
+                    reasons_buy.append(f"Price above CPR ({levels['cpr_high']:,.0f}) — bullish structure")
+                elif spot < levels["cpr_low"]:
+                    score_sell += 1
+                    reasons_sell.append(f"Price below CPR ({levels['cpr_low']:,.0f}) — bearish structure")
+                if levels.get("narrow_cpr"):
+                    (reasons_buy if score_buy >= score_sell else reasons_sell).append(
+                        "Narrow CPR — trending day likely (good for option buying)")
+
+            # 10. Previous day high/low
+            if levels.get("pdh"):
+                if spot > levels["pdh"]:
+                    score_buy += 1
+                    reasons_buy.append(f"Trading above previous day high {levels['pdh']:,.0f}")
+                elif spot < levels["pdl"]:
+                    score_sell += 1
+                    reasons_sell.append(f"Trading below previous day low {levels['pdl']:,.0f}")
+
+            # 11. Gap open
+            gap = levels.get("gap_pct")
+            if gap is not None:
+                if gap >= 0.3:
+                    score_buy += 1
+                    reasons_buy.append(f"Gap-up open {gap:+.2f}%")
+                elif gap <= -0.3:
+                    score_sell += 1
+                    reasons_sell.append(f"Gap-down open {gap:+.2f}%")
+
+            # 12. Intraday VWAP — price above VWAP = CE bias, below = PE bias
+            vwap_lvl = levels.get("vwap")
+            if vwap_lvl:
+                if spot > vwap_lvl:
+                    score_buy += 1
+                    reasons_buy.append(f"Price above VWAP ({vwap_lvl:,.0f}) — intraday bullish")
+                elif spot < vwap_lvl:
+                    score_sell += 1
+                    reasons_sell.append(f"Price below VWAP ({vwap_lvl:,.0f}) — intraday bearish")
+
             # ── Determine signal ──────────────────────────────────
             total = score_buy + score_sell
             confidence = round((max(score_buy, score_sell) / max(total, 1)) * 100)
@@ -1124,6 +1266,35 @@ async def algo_signals():
                     logger.warning("Could not fetch real expiry for %s: %s", index, exp_err)
 
             atm_strike = round(spot / strike_gap) * strike_gap
+            dte = days_to_expiry(expiry_dt.strftime("%Y-%m-%d"))
+
+            # ── Theta-decay clock — when (not) to buy options today ──
+            # Theta accelerates intraday and into expiry. Option BUYERS
+            # should avoid fresh entries late in the day / near expiry.
+            now_ist = datetime.now()
+            mins_to_close = (15 * 60 + 30) - (now_ist.hour * 60 + now_ist.minute)
+            is_expiry_day = dte == 0
+            if now_ist.weekday() >= 5:
+                theta_status, theta_note = "CLOSED", "Weekend — market closed"
+            elif now_ist.hour < 9 or (now_ist.hour == 9 and now_ist.minute < 15):
+                theta_status, theta_note = "PRE_OPEN", "Market not open yet"
+            elif mins_to_close <= 0:
+                theta_status, theta_note = "CLOSED", "Market closed for the day"
+            elif is_expiry_day and (now_ist.hour > 13 or mins_to_close < 60):
+                theta_status = "AVOID"
+                theta_note = "Expiry day + late session — severe theta decay, avoid buying options"
+            elif mins_to_close <= 60:
+                theta_status = "AVOID"
+                theta_note = f"Only {mins_to_close} min to close — theta crush, avoid fresh option buys"
+            elif now_ist.hour >= 14 and now_ist.minute >= 30 or now_ist.hour >= 15:
+                theta_status = "CAUTION"
+                theta_note = "After 14:30 — theta accelerating, keep trades short / smaller size"
+            elif is_expiry_day:
+                theta_status = "CAUTION"
+                theta_note = "Expiry day — premiums decay fast, book quickly"
+            else:
+                theta_status = "OK"
+                theta_note = "Good window for option buying (low intraday theta drag)"
 
             # ── Fetch real ATM premiums from live option chain ──────
             live_ce_ltp = live_pe_ltp = 0
@@ -1157,6 +1328,15 @@ async def algo_signals():
                     "target": target,
                     "sl": sl,
                     "reward_risk": round((target - premium) / max(premium - sl, 0.1), 2),
+                    # Trailing stop-loss ladder — lock gains as the trade moves
+                    "trail": [
+                        {"at": round(premium * 1.20, 1), "move_sl_to": round(premium, 1),
+                         "label": "+20% → SL to cost (risk-free)"},
+                        {"at": round(premium * 1.40, 1), "move_sl_to": round(premium * 1.20, 1),
+                         "label": "+40% → trail SL to +20%"},
+                        {"at": round(premium * 1.60, 1), "move_sl_to": round(premium * 1.35, 1),
+                         "label": "+60% → trail SL to +35%, ride the rest"},
+                    ],
                     "tradingsymbol": _build_nfo_symbol(index, expiry_dt, atm_strike, opt_type),
                     "exchange": exchange,
                     "lot_size": lot_size,
@@ -1169,10 +1349,10 @@ async def algo_signals():
             #   MILD:   target +40% / SL -20%   → RR = 2.0
             ce_leg = pe_leg = None
 
-            if score_buy >= 8 and score_buy > score_sell + 2:
+            if score_buy >= 10 and score_buy > score_sell + 2:
                 direction, color, reasons = "STRONG BUY", "green", reasons_buy
                 ce_leg = _make_leg("CE", _est_ce(), 1.6, 0.7)
-            elif score_sell >= 8 and score_sell > score_buy + 2:
+            elif score_sell >= 10 and score_sell > score_buy + 2:
                 direction, color, reasons = "STRONG SELL", "red", reasons_sell
                 pe_leg = _make_leg("PE", _est_pe(), 1.6, 0.7)
             elif score_buy > score_sell:
@@ -1184,6 +1364,35 @@ async def algo_signals():
             else:
                 direction, color = "NEUTRAL", "yellow"
                 reasons = ["Indicators are mixed — wait for a clearer setup; no option buy recommended"]
+
+            # ── Lock the trade plan when the signal fires ─────────
+            # Live premiums drift every tick. The actionable buy/sell
+            # prices are the ones captured when this signal became
+            # active; they stay fixed until the signal (or strike/
+            # expiry) changes.
+            leg = ce_leg or pe_leg
+            if leg is not None:
+                prev_state = _algo_signal_state.get(index)
+                if (not prev_state
+                        or prev_state.get("signal") != direction
+                        or prev_state.get("strike") != leg["strike"]
+                        or prev_state.get("expiry") != leg["expiry"]):
+                    _algo_signal_state[index] = {
+                        "signal": direction,
+                        "since":  datetime.now().isoformat(),
+                        "entry":  leg["entry"],
+                        "target": leg["target"],
+                        "sl":     leg["sl"],
+                        "strike": leg["strike"],
+                        "expiry": leg["expiry"],
+                    }
+                locked = _algo_signal_state[index]
+                leg["signal_since"]     = locked["since"]
+                leg["entry_at_signal"]  = locked["entry"]
+                leg["target_at_signal"] = locked["target"]
+                leg["sl_at_signal"]     = locked["sl"]
+            else:
+                _algo_signal_state.pop(index, None)
 
             results[index] = sanitize({
                 "index": index,
@@ -1203,8 +1412,11 @@ async def algo_signals():
                 "st_ema_cross": ("BULL CROSS" if st_ema_cross_up
                                  else "BEAR CROSS" if st_ema_cross_down
                                  else "—"),
+                "levels": levels,
+                "theta_clock": {"status": theta_status, "note": theta_note,
+                                "mins_to_close": mins_to_close, "dte": dte},
                 "lot_size": lot_size,
-                "reasons": reasons[:6],
+                "reasons": reasons[:8],
                 "live_premiums": live_ce_ltp > 0 or live_pe_ltp > 0,
                 "ce": ce_leg,
                 "pe": pe_leg,
@@ -1823,14 +2035,22 @@ async def dashboard():
     ad_data = calculate_advance_decline(adv, dec, unch)
     ad_data.update(breadth)
 
-    # Sentiment
-    nifty_pcr = 0.8 + random.uniform(-0.2, 0.4)
+    # Sentiment — PCR from the actual option chain (live when logged in),
+    # not a random number, so the gauge tracks the real market.
+    try:
+        nifty_expiry_str = get_nearest_expiry("NIFTY").strftime("%Y-%m-%d")
+        chain_for_pcr, _ = _get_option_chain_list("NIFTY", nifty_expiry_str)
+        nifty_pcr = calculate_pcr(chain_for_pcr).get("pcr_oi", 1.0) or 1.0
+    except Exception as pcr_err:
+        logger.warning("Dashboard PCR from chain failed: %s", pcr_err)
+        nifty_pcr = 1.0
+
     sentiment = get_market_sentiment(
         pcr=nifty_pcr,
         vix=vix_q.get("last_price", 14.5),
         advance_decline_ratio=ad_data["ratio"],
         fii_net=fii_dii.get("fii_net", 500),
-        trend=nifty_tech.get("trend", "NEUTRAL"),
+        trend=nifty_tech.get("overall_bias", "NEUTRAL"),
     )
 
     # Quick signals
@@ -2755,11 +2975,16 @@ def _live_stock_fo(client: ZerodhaClient, stock: Dict[str, Any]) -> Dict[str, An
     )
 
 
+# Per-symbol signal state — locks the buy time/price when a stock's
+# recommendation fires (same idea as the Algo trade-plan lock).
+_stock_signal_state: Dict[str, Dict[str, Any]] = {}
+
+
 @app.get("/api/stock-fo-picks")
 async def stock_fo_picks():
     """
-    Top 5 F&O stocks (RELIANCE, HDFCBANK, ICICIBANK, INFY, TCS) analyzed with
-    futures + options + technical rules, each with a BUY CE / BUY PE / WAIT call.
+    Top 10 F&O stocks analyzed with futures + options + technical rules,
+    each with a BUY CE / BUY PE / WAIT call.
     """
     client = get_client()
     results = []
@@ -2774,6 +2999,24 @@ async def stock_fo_picks():
                            stock["symbol"], e)
             results.append(_mock_stock_fo(stock))
 
+    # Lock buy time + price when the recommendation fires
+    for r in results:
+        rec = r["recommendation"]
+        sym = r["symbol"]
+        if rec["action"] in ("BUY CE", "BUY PE"):
+            prev = _stock_signal_state.get(sym)
+            if (not prev or prev["action"] != rec["action"]
+                    or prev["strike"] != rec["strike"]):
+                _stock_signal_state[sym] = {
+                    "action": rec["action"], "strike": rec["strike"],
+                    "since": datetime.now().isoformat(), "entry": rec["entry"],
+                }
+            locked = _stock_signal_state[sym]
+            rec["signal_since"]    = locked["since"]
+            rec["entry_at_signal"] = locked["entry"]
+        else:
+            _stock_signal_state.pop(sym, None)
+
     # Strongest conviction first
     results.sort(key=lambda r: abs(r["recommendation"]["score"]), reverse=True)
 
@@ -2787,6 +3030,145 @@ async def stock_fo_picks():
         "mode":      "live" if client.is_authenticated() else "mock",
         "summary":   summary,
         "stocks":    results,
+    }))
+
+
+# ---------------------------------------------------------------------------
+# Time Span Picks — CE/PE per intraday session for NIFTY & SENSEX
+# ---------------------------------------------------------------------------
+
+TRADING_SESSIONS = [
+    {"key": "morning",   "label": "Morning",   "start": "09:15", "end": "11:45"},
+    {"key": "midday",    "label": "Midday",    "start": "11:45", "end": "14:00"},
+    {"key": "afternoon", "label": "Afternoon", "start": "14:00", "end": "15:30"},
+]
+
+
+@app.get("/api/time-span-picks")
+async def time_span_picks():
+    """
+    CE/PE buy recommendation for NIFTY & SENSEX per intraday time span
+    (09:15–11:45, 11:45–14:00, 14:00–15:30). Uses today's price action in
+    each window plus the same window's direction over the last trading days.
+    """
+    import datetime as _dt
+
+    now = datetime.now()
+    client = get_client()
+    indices_out = {}
+
+    for index in ["NIFTY", "SENSEX"]:
+        df = _get_historical_df(index, "15minute", 10)
+
+        # Spot + ATM + live ATM premiums
+        try:
+            if client.is_authenticated():
+                spot = client.get_index_quote(index)["last_price"]
+            else:
+                spot = _mock_quote(index)["last_price"]
+        except Exception:
+            spot = float(df["close"].iloc[-1]) if not df.empty else 0
+        atm = get_atm_strike(spot, index)
+        expiry = get_nearest_expiry(index).strftime("%Y-%m-%d")
+        ce_ltp = pe_ltp = 0.0
+        try:
+            chain, _ = _get_option_chain_list(index, expiry)
+            row = next((r for r in chain if r.get("strike") == atm), None)
+            if row:
+                ce_ltp = float((row.get("CE") or {}).get("ltp") or 0)
+                pe_ltp = float((row.get("PE") or {}).get("ltp") or 0)
+        except Exception:
+            pass
+        if not ce_ltp or not pe_ltp:
+            est = round(spot * 0.0085, 1)
+            ce_ltp = ce_ltp or est
+            pe_ltp = pe_ltp or est
+
+        sessions_out = []
+        for sess in TRADING_SESSIONS:
+            sh, sm = map(int, sess["start"].split(":"))
+            eh, em = map(int, sess["end"].split(":"))
+            start_t, end_t = _dt.time(sh, sm), _dt.time(eh, em)
+
+            # Per-day direction of this window over recent days
+            up_days = total_days = 0
+            today_ret = None
+            if not df.empty:
+                for day, gd in df.groupby(df.index.date):
+                    g = gd.between_time(start_t, end_t)
+                    if len(g) >= 2:
+                        ret = (float(g["close"].iloc[-1]) - float(g["open"].iloc[0])) \
+                              / float(g["open"].iloc[0]) * 100
+                        if day == now.date():
+                            today_ret = ret
+                        else:
+                            total_days += 1
+                            up_days += 1 if ret > 0 else 0
+
+            # Session status by current IST time
+            now_t = now.time()
+            if now_t < start_t:
+                status = "UPCOMING"
+            elif now_t > end_t:
+                status = "COMPLETED"
+            else:
+                status = "ACTIVE"
+
+            # Signal: today's move in this window (weight 2) + historical
+            # bias of the same window (weight 1)
+            score = 0
+            reasons = []
+            if today_ret is not None:
+                if today_ret > 0.05:
+                    score += 2
+                    reasons.append(f"today's {sess['label'].lower()} move {today_ret:+.2f}%")
+                elif today_ret < -0.05:
+                    score -= 2
+                    reasons.append(f"today's {sess['label'].lower()} move {today_ret:+.2f}%")
+            if total_days:
+                bias = up_days / total_days
+                if bias >= 0.6:
+                    score += 1
+                    reasons.append(f"rose {up_days}/{total_days} recent days in this window")
+                elif bias <= 0.4:
+                    score -= 1
+                    reasons.append(f"fell {total_days - up_days}/{total_days} recent days in this window")
+                else:
+                    reasons.append(f"mixed window history ({up_days} up / {total_days - up_days} down)")
+
+            if score >= 1:
+                signal, entry = "BUY CE", ce_ltp
+            elif score <= -1:
+                signal, entry = "BUY PE", pe_ltp
+            else:
+                signal, entry = "WAIT", 0
+
+            sessions_out.append({
+                "label":   sess["label"],
+                "span":    f"{sess['start']} – {sess['end']}",
+                "status":  status,
+                "signal":  signal,
+                "strike":  atm,
+                "entry":   round(entry, 1),
+                "target":  round(entry * 1.4, 1) if entry else 0,   # +40%
+                "sl":      round(entry * 0.8, 1) if entry else 0,   # -20% → RR 1:2
+                "sell_by": sess["end"],
+                "reason":  " · ".join(reasons) if reasons else "no clear pattern in this window",
+                "today_return": round(today_ret, 2) if today_ret is not None else None,
+                "hist_up_days": up_days,
+                "hist_days":    total_days,
+            })
+
+        indices_out[index] = {
+            "spot": round(spot, 2), "atm": atm, "expiry": expiry,
+            "ce_ltp": round(ce_ltp, 1), "pe_ltp": round(pe_ltp, 1),
+            "sessions": sessions_out,
+        }
+
+    return JSONResponse(sanitize({
+        "timestamp": now.isoformat(),
+        "now_ist":   now.strftime("%H:%M:%S"),
+        "indices":   indices_out,
     }))
 
 

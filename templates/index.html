@@ -766,6 +766,9 @@
       <div class="nav-item" onclick="switchTab('stock-picks')" data-tab="stock-picks">
         <span class="nav-icon">🏆</span> Stock F&amp;O Picks
       </div>
+      <div class="nav-item" onclick="switchTab('time-span')" data-tab="time-span">
+        <span class="nav-icon">⏰</span> Time Slots
+      </div>
     </nav>
   </aside>
 
@@ -1148,6 +1151,7 @@
       <div class="section-controls" style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
         <button class="interval-btn" onclick="loadPositions()">↻ Refresh</button>
         <span id="pos-auth-badge"></span>
+        <span id="pos-net-total" style="font-size:13px;font-weight:700;"></span>
         <span id="pos-timestamp" style="font-size:11px;color:var(--text-muted);margin-left:auto;"></span>
       </div>
 
@@ -1163,13 +1167,18 @@
               <th>Avg Price</th>
               <th>LTP</th>
               <th>P&L</th>
+              <th>Charges (est)</th>
+              <th>Net P&L</th>
               <th>Day P&L</th>
             </tr>
           </thead>
           <tbody id="positions-tbody">
-            <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">Login to view positions</td></tr>
+            <tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">Login to view positions</td></tr>
           </tbody>
         </table>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:6px;">
+          Charges estimated for the full round trip: brokerage ₹20×2, STT 0.1% (sell), exchange txn, 18% GST, SEBI fee, stamp duty. Net P&amp;L = P&amp;L − charges.
+        </div>
       </div>
 
       <!-- Position Analysis Cards -->
@@ -1459,6 +1468,30 @@
 
     </div><!-- end tab-stock-picks -->
 
+    <!-- ===== TIME SLOTS TAB ===== -->
+    <div class="tab-panel" id="tab-time-span">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;">
+        <span style="font-size:13px;font-weight:700;color:var(--text-bright);">⏰ Intraday Time Slots — CE / PE per Session</span>
+        <span style="font-size:11px;color:var(--text-muted);">NIFTY &amp; SENSEX · buy window → exit by session end</span>
+        <div style="flex:1;"></div>
+        <span id="tsp-now" style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);"></span>
+        <button class="interval-btn" onclick="loadTimeSpan()" title="Refresh" style="padding:4px 10px;">↻</button>
+      </div>
+
+      <div id="tsp-content">
+        <div class="loading-overlay"><div class="spinner"></div> Analyzing time slots...</div>
+      </div>
+
+      <div class="card mt-3" style="font-size:11px;color:var(--text-muted);line-height:1.7;">
+        <div class="card-title">How these picks work</div>
+        Each session (<b>09:15–11:45</b> · <b>11:45–14:00</b> · <b>14:00–15:30</b>) is scored from
+        <b>today's price move inside that window</b> (±2) and <b>how the same window behaved on recent days</b> (±1).
+        Score ≥ +1 → <span class="num-green">BUY CE</span> · ≤ −1 → <span class="num-red">BUY PE</span> · else <span class="num-yellow">WAIT</span>.
+        Strike = ATM · target +40% / stop-loss −20% of premium (1:2 risk-reward) ·
+        <b>sell by the session end time</b> (or earlier at target/SL). Educational only — not investment advice.
+      </div>
+    </div><!-- end tab-time-span -->
+
   </main>
 </div>
 
@@ -1602,6 +1635,7 @@ function switchTab(tab) {
   if (tab === 'advanced')     loadAdvanced();
   if (tab === 'smart-oi')    { populateSOIExpiry(); loadSmartOI(); }
   if (tab === 'stock-picks')  loadStockPicks();
+  if (tab === 'time-span')    loadTimeSpan();
 }
 
 // ============================================================
@@ -2364,10 +2398,12 @@ async function loadPositions() {
     }
     document.getElementById('pos-auth-badge').innerHTML = '<span style="color:var(--green);font-size:12px">● Live data</span>';
 
-    // ── Positions table ──
+    // ── Positions table (with estimated charges + net P&L) ──
     const netPos = d.net || [];
-    const tbody = netPos.map(p => {
+    const rows = netPos.map(p => {
       const pnl = p.pnl || 0;
+      const charges = p.est_charges || 0;
+      const netPnl  = p.net_pnl != null ? p.net_pnl : pnl - charges;
       return `<tr>
         <td><b>${p.tradingsymbol}</b></td>
         <td>${p.product}</td>
@@ -2375,11 +2411,36 @@ async function loadPositions() {
         <td style="font-family:var(--font-mono)">${fmt(p.average_price)}</td>
         <td style="font-family:var(--font-mono)">${fmt(p.last_price)}</td>
         <td class="${pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">${pnl >= 0 ? '+' : ''}${fmt(pnl)}</td>
+        <td style="font-family:var(--font-mono);color:var(--red)">−${fmt(charges)}</td>
+        <td class="${netPnl >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-weight:700">${netPnl >= 0 ? '+' : ''}${fmt(netPnl)}</td>
         <td class="${(p.day_m2m||0) >= 0 ? 'pnl-positive' : 'pnl-negative'}">${(p.day_m2m||0) >= 0 ? '+' : ''}${fmt(p.day_m2m)}</td>
       </tr>`;
     }).join('');
-    document.getElementById('positions-tbody').innerHTML = tbody ||
-      '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">No open positions</td></tr>';
+
+    // Totals footer + headline net profit
+    const s = d.summary || {};
+    const totalRow = netPos.length ? `
+      <tr style="border-top:2px solid var(--border-light);font-weight:700;">
+        <td colspan="5" style="text-align:right;">TOTAL</td>
+        <td class="${(s.total_pnl||0) >= 0 ? 'pnl-positive' : 'pnl-negative'}">${(s.total_pnl||0) >= 0 ? '+' : ''}${fmt(s.total_pnl)}</td>
+        <td style="font-family:var(--font-mono);color:var(--red)">−${fmt(s.total_charges)}</td>
+        <td class="${(s.total_net_pnl||0) >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-size:13px;">${(s.total_net_pnl||0) >= 0 ? '+' : ''}${fmt(s.total_net_pnl)}</td>
+        <td></td>
+      </tr>` : '';
+
+    document.getElementById('positions-tbody').innerHTML = (rows + totalRow) ||
+      '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:20px">No open positions</td></tr>';
+
+    const netTotalEl = document.getElementById('pos-net-total');
+    if (netPos.length && s.total_net_pnl != null) {
+      const np = s.total_net_pnl;
+      netTotalEl.innerHTML = `Total Profit after charges:
+        <span style="color:${np >= 0 ? 'var(--green)' : 'var(--red)'};font-family:var(--font-mono);">
+        ${np >= 0 ? '+' : ''}₹${fmt(np)}</span>
+        <span style="font-size:10px;color:var(--text-muted);">(gross ${ (s.total_pnl||0) >= 0 ? '+' : ''}₹${fmt(s.total_pnl)} − charges ₹${fmt(s.total_charges)})</span>`;
+    } else {
+      netTotalEl.innerHTML = '';
+    }
 
     // ── Analysis cards ──
     const analysisPositions = (da.positions || []).filter(p => p.opt_type);
@@ -3090,6 +3151,9 @@ function renderAlgoBlock(d, idx) {
       <div class="algo-ind-chip">Confidence <span class="${colorClass==='green'?'up':colorClass==='red'?'down':'neut'}">${d.confidence}%</span></div>
     </div>
 
+    ${renderAlgoLevels(d.levels, d.spot)}
+    ${renderThetaClock(d.theta_clock)}
+
     <!-- Option BUY recommendation (CE or PE only — no short/futures legs) -->
     <div class="algo-body">
       ${renderAlgoLeg(ce, 'ce')}
@@ -3119,29 +3183,99 @@ function renderAlgoBlock(d, idx) {
   </div>`;
 }
 
+function renderThetaClock(tc) {
+  if (!tc) return '';
+  const map = {
+    OK:       { color: 'var(--green)',  bg: 'rgba(0,217,100,0.08)',  icon: '🟢' },
+    CAUTION:  { color: 'var(--yellow)', bg: 'rgba(255,215,0,0.08)',  icon: '🟡' },
+    AVOID:    { color: 'var(--red)',    bg: 'rgba(255,71,87,0.08)',  icon: '🔴' },
+    PRE_OPEN: { color: 'var(--text-muted)', bg: 'rgba(110,118,129,0.1)', icon: '⏳' },
+    CLOSED:   { color: 'var(--text-muted)', bg: 'rgba(110,118,129,0.1)', icon: '🌙' },
+  };
+  const s = map[tc.status] || map.OK;
+  return `
+    <div style="margin:0 20px 10px;padding:7px 12px;border-radius:6px;background:${s.bg};
+                font-size:11px;display:flex;align-items:center;gap:8px;">
+      <span>${s.icon}</span>
+      <b style="color:${s.color};">Theta clock: ${tc.status}</b>
+      <span style="color:var(--text-muted);">— ${tc.note}</span>
+    </div>`;
+}
+
+function renderAlgoLevels(lv, spot) {
+  if (!lv || !lv.pivot) return '';
+  const pos = (level) => spot > level ? 'var(--green)' : 'var(--red)';
+  const orb = (lv.orb_high && lv.orb_low)
+    ? `<div class="algo-ind-chip">ORB <span style="color:${spot > lv.orb_high ? 'var(--green)' : spot < lv.orb_low ? 'var(--red)' : 'var(--text-muted)'}">${fmtNum(lv.orb_low)} – ${fmtNum(lv.orb_high)}${spot > lv.orb_high ? ' ▲ breakout' : spot < lv.orb_low ? ' ▼ breakdown' : ''}</span></div>`
+    : '';
+  const gap = (lv.gap_pct != null)
+    ? `<div class="algo-ind-chip">Gap <span class="${lv.gap_pct >= 0.3 ? 'up' : lv.gap_pct <= -0.3 ? 'down' : 'neut'}">${lv.gap_pct >= 0 ? '+' : ''}${lv.gap_pct}%</span></div>`
+    : '';
+  return `
+    <div class="algo-indicators-row" style="padding-top:0;">
+      <span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.6px;color:var(--text-muted);align-self:center;">Key Levels</span>
+      ${orb}
+      <div class="algo-ind-chip">CPR <span style="color:${spot > lv.cpr_high ? 'var(--green)' : spot < lv.cpr_low ? 'var(--red)' : 'var(--yellow)'}">${fmtNum(lv.cpr_low)} – ${fmtNum(lv.cpr_high)}${lv.narrow_cpr ? ' · NARROW' : ''}</span></div>
+      ${lv.vwap ? `<div class="algo-ind-chip">VWAP <span style="color:${pos(lv.vwap)}">${fmtNum(lv.vwap)}${spot > lv.vwap ? ' ▲' : ' ▼'}</span></div>` : ''}
+      <div class="algo-ind-chip">Pivot <span style="color:${pos(lv.pivot)}">${fmtNum(lv.pivot)}</span></div>
+      <div class="algo-ind-chip">R1/S1 <span class="neut">${fmtNum(lv.r1)} / ${fmtNum(lv.s1)}</span></div>
+      <div class="algo-ind-chip">PDH/PDL <span class="neut"><span style="color:${spot > lv.pdh ? 'var(--green)' : 'inherit'}">${fmtNum(lv.pdh)}</span> / <span style="color:${spot < lv.pdl ? 'var(--red)' : 'inherit'}">${fmtNum(lv.pdl)}</span></span></div>
+      ${gap}
+    </div>`;
+}
+
 function renderAlgoLeg(leg, type) {
   if (!leg) return '';
+  const buyAt   = leg.entry_at_signal  ?? leg.entry;   // locked when the signal fired
+  const target  = leg.target_at_signal ?? leg.target;
+  const sl      = leg.sl_at_signal     ?? leg.sl;
+  const since   = leg.signal_since
+    ? new Date(leg.signal_since).toLocaleTimeString('en-IN', { hour12: false })
+    : null;
+  const diff    = leg.entry - buyAt;   // current premium vs the signal price
+  const diffTxt = Math.abs(diff) < 0.05 ? 'same as signal price'
+    : diff < 0 ? `₹${Math.abs(diff).toFixed(1)} cheaper than signal price ✓`
+    : `₹${diff.toFixed(1)} costlier than signal price`;
+  const diffColor = Math.abs(diff) < 0.05 ? 'var(--text-muted)' : diff < 0 ? 'var(--green)' : 'var(--red)';
+
   return `
       <div class="algo-option-card ${type}" style="grid-column:1/-1;">
         <div class="algo-opt-header">
           <span class="algo-opt-title ${type}">${type === 'ce' ? 'CALL (CE)' : 'PUT (PE)'}</span>
+          ${since ? `<span style="font-size:11px;color:var(--text-muted);">⏱ Signal active since <b style="color:var(--text-bright);font-family:var(--font-mono);">${since}</b></span>` : ''}
           <span class="algo-opt-action buy">${leg.action}</span>
         </div>
-        <div class="algo-price-grid">
+        <div class="algo-price-grid" style="grid-template-columns:repeat(4,1fr);">
           <div class="algo-price-item">
-            <label>Entry Price</label>
-            <div class="val entry">₹${leg.entry}</div>
+            <label>Buy Price (at signal)</label>
+            <div class="val entry">₹${buyAt}</div>
           </div>
           <div class="algo-price-item">
-            <label>Target (+${Math.round((leg.target / leg.entry - 1) * 100)}%)</label>
-            <div class="val target">₹${leg.target}</div>
+            <label>Premium Now</label>
+            <div class="val" style="color:${diffColor};">₹${leg.entry}</div>
           </div>
           <div class="algo-price-item">
-            <label>Stop Loss (−${Math.round((1 - leg.sl / leg.entry) * 100)}%)</label>
-            <div class="val sl">₹${leg.sl}</div>
+            <label>Sell Target (+${Math.round((target / buyAt - 1) * 100)}%)</label>
+            <div class="val target">₹${target}</div>
+          </div>
+          <div class="algo-price-item">
+            <label>Stop Loss (−${Math.round((1 - sl / buyAt) * 100)}%)</label>
+            <div class="val sl">₹${sl}</div>
           </div>
         </div>
         <div class="algo-strike-label">Strike: <strong style="color:var(--text-bright)">${leg.strike}</strong> &nbsp;|&nbsp; Expiry: <strong style="color:var(--text-muted)">${leg.expiry||'—'}</strong> &nbsp;|&nbsp; R:R = <strong style="color:var(--blue)">1:${leg.reward_risk}</strong></div>
+        <div style="margin-top:8px;padding:7px 10px;border-radius:6px;background:rgba(88,166,255,0.06);font-size:11px;line-height:1.6;color:var(--text);">
+          <b>Trade plan:</b> ${since ? `buy time: <b>${since}</b> (when the signal fired) —` : ''} buy near <b>₹${buyAt}</b>
+          (currently ${diffTxt}) · sell at <b style="color:var(--green)">₹${target}</b>
+          · exit if it drops to <b style="color:var(--red)">₹${sl}</b>
+          · sell time: when target/SL hits, or square off by <b style="color:var(--yellow)">15:15 IST</b>.
+          Plan stays fixed while the signal holds; a new plan is locked when the signal changes.
+        </div>
+        ${(leg.trail && leg.trail.length) ? `
+        <div style="margin-top:8px;padding:7px 10px;border-radius:6px;background:rgba(167,139,250,0.06);font-size:11px;line-height:1.7;color:var(--text);">
+          <b>Trailing stop-loss:</b>
+          ${leg.trail.map(t => `<br>• premium hits <b style="color:var(--green)">₹${fmt(t.at,1)}</b> → move SL to <b>₹${fmt(t.move_sl_to,1)}</b> <span style="color:var(--text-muted)">(${t.label})</span>`).join('')}
+        </div>` : ''}
         <div style="margin-top:10px;display:flex;gap:8px;">
           <button class="algo-order-btn buy"
             onclick="placeAlgoOrder(${JSON.stringify(leg).replace(/"/g,'&quot;')})">
@@ -3825,6 +3959,62 @@ async function loadSmartOI() {
 }
 
 // ============================================================
+// Time Slots — CE/PE per intraday session
+// ============================================================
+async function loadTimeSpan() {
+  const wrap = document.getElementById('tsp-content');
+  wrap.innerHTML = '<div class="loading-overlay"><div class="spinner"></div> Analyzing time slots...</div>';
+  try {
+    const res = await fetch('/api/time-span-picks');
+    if (!res.ok) throw new Error(res.statusText);
+    const d = await res.json();
+    document.getElementById('tsp-now').textContent = 'Now: ' + (d.now_ist || '') + ' IST';
+    wrap.innerHTML = ['NIFTY', 'SENSEX'].map(idx => renderTimeSpanCard(idx, d.indices[idx])).join('');
+  } catch(e) {
+    console.error('Time span error:', e);
+    wrap.innerHTML = '<div class="card" style="color:var(--red);">Failed to load time slot picks. Try refreshing.</div>';
+  }
+}
+
+function renderTimeSpanCard(idx, d) {
+  if (!d) return '';
+  const statusChip = (st) =>
+    st === 'ACTIVE'    ? '<span class="badge high">● LIVE NOW</span>' :
+    st === 'COMPLETED' ? '<span class="badge low">DONE</span>' :
+                         '<span class="badge medium">UPCOMING</span>';
+  const sigColor = (s) => s === 'BUY CE' ? 'var(--green)' : s === 'BUY PE' ? 'var(--red)' : 'var(--yellow)';
+
+  const rows = (d.sessions || []).map(s => `
+    <tr style="${s.status === 'ACTIVE' ? 'background:rgba(88,166,255,0.06);' : ''}">
+      <td style="white-space:nowrap;"><b>${s.label}</b><br><span style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);">${s.span}</span></td>
+      <td style="text-align:center;">${statusChip(s.status)}</td>
+      <td style="text-align:center;font-weight:700;color:${sigColor(s.signal)};white-space:nowrap;">${s.signal}</td>
+      <td>${s.signal === 'WAIT' ? '—' : fmtNum(s.strike) + ' ' + s.signal.slice(4)}</td>
+      <td>${s.entry ? '₹' + fmt(s.entry, 1) : '—'}</td>
+      <td class="num-green">${s.target ? '₹' + fmt(s.target, 1) : '—'}</td>
+      <td class="num-red">${s.sl ? '₹' + fmt(s.sl, 1) : '—'}</td>
+      <td style="white-space:nowrap;color:var(--yellow);font-family:var(--font-mono);">${s.signal === 'WAIT' ? '—' : s.sell_by}</td>
+      <td style="text-align:left;font-size:10px;color:var(--text-muted);">${s.reason}</td>
+    </tr>`).join('');
+
+  return `
+  <div class="card" style="margin-bottom:12px;">
+    <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:8px;">
+      <span style="font-size:14px;font-weight:700;color:var(--text-bright);">${idx}</span>
+      <span style="font-family:var(--font-mono);font-size:13px;">₹${fmtNum(d.spot)}</span>
+      <span style="font-size:11px;color:var(--text-muted);">ATM ${fmtNum(d.atm)} · Expiry ${d.expiry}</span>
+    </div>
+    <table class="data-table">
+      <thead><tr>
+        <th style="text-align:left">Session</th><th>Status</th><th>Signal</th><th>Option</th>
+        <th>Buy ~</th><th>Target (+40%)</th><th>SL (−20%)</th><th>Sell By</th><th style="text-align:left">Why</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+// ============================================================
 // Theme (dark / light)
 // ============================================================
 function chartTheme() {
@@ -3934,6 +4124,11 @@ function renderStockPickCard(st) {
         <div style="font-size:12px;font-weight:700;color:var(--text-bright);margin-bottom:6px;">
           ${r.contract} &nbsp;<span class="badge ${confCls}">${r.confidence} · score ${r.score >= 0 ? '+' : ''}${r.score}</span>
         </div>
+        ${r.signal_since ? `<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">
+          ⏱ Buy signal active since <b style="color:var(--text-bright);font-family:var(--font-mono);">${new Date(r.signal_since).toLocaleTimeString('en-IN',{hour12:false})}</b>
+          ${r.entry_at_signal ? `(premium then ₹${fmt(r.entry_at_signal, 2)})` : ''}
+          · sell at target / SL, or exit by <b style="color:var(--yellow);">15:15 IST</b>
+        </div>` : ''}
         <div class="signal-grid">
           <div class="signal-field"><label>Entry</label><div class="val">₹${fmt(r.entry, 2)}</div></div>
           <div class="signal-field"><label>Target (+60%)</label><div class="val target">₹${fmt(r.target, 2)}</div></div>

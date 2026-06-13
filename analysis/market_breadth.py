@@ -251,32 +251,35 @@ def get_market_sentiment(
     score += fii_score
     components["fii"] = {"value": fii_net, "score": fii_score, "label": fii_label}
 
-    # Trend bonus
-    if trend == "BULLISH":
+    # Trend bonus (accepts both bias and trend vocabularies)
+    if trend in ("BULLISH", "UPTREND"):
         score += 0.5
-    elif trend == "BEARISH":
+        trend_score = 0.5
+    elif trend in ("BEARISH", "DOWNTREND"):
         score -= 0.5
+        trend_score = -0.5
+    else:
+        trend_score = 0.0
+    components["trend"] = {"value": trend, "score": trend_score, "label": trend}
 
     # Normalize to percentage (max possible is 8.5, min is -8.5)
     max_score = 8.5
     normalized = round((score / max_score) * 100, 1)
 
-    # Label
+    # Gauge needle moves continuously with the score (50 = neutral center)
+    gauge_value = max(5.0, min(95.0, 50 + normalized * 0.45))
+
+    # Symmetric label thresholds
     if score >= 4:
         label = "STRONGLY_BULLISH"
-        gauge_value = min(90, 50 + normalized * 0.4)
-    elif score >= 2:
+    elif score >= 1.5:
         label = "BULLISH"
-        gauge_value = min(75, 50 + normalized * 0.4)
-    elif score >= -1:
+    elif score > -1.5:
         label = "NEUTRAL"
-        gauge_value = 50.0
-    elif score >= -3:
+    elif score > -4:
         label = "BEARISH"
-        gauge_value = max(25, 50 + normalized * 0.4)
     else:
         label = "STRONGLY_BEARISH"
-        gauge_value = max(10, 50 + normalized * 0.4)
 
     return {
         "score": round(score, 2),

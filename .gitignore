@@ -44,3 +44,6 @@ Thumbs.db
 # Cache
 .pytest_cache/
 .mypy_cache/
+
+# MS Office temp/lock files
+~$*

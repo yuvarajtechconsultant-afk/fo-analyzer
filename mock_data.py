@@ -92,6 +92,12 @@ def get_mock_historical(index: str, interval: str = "5minute",
     base  = NIFTY_BASE if index == "NIFTY" else SENSEX_BASE
     trend = 0.0002 if index == "NIFTY" else 0.00018
 
+    # Deterministic per day/index/interval — repeated calls must return the
+    # SAME candles, otherwise indicators (and algo signals) flap on every
+    # refresh in mock mode.
+    random.seed(int(date.today().strftime("%Y%m%d")) * 7
+                + sum(ord(c) for c in index) + sum(ord(c) for c in interval))
+
     n_trading = min(days, 22)          # ≤22 trading days in a month
     daily_closes = _simulate_prices(base, n_trading, trend)
 
