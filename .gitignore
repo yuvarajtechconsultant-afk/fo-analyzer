@@ -47,3 +47,6 @@ Thumbs.db
 
 # MS Office temp/lock files
 ~$*
+
+# runtime snapshot DB
+snapshots.db

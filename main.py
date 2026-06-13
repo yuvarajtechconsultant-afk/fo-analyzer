@@ -54,6 +54,7 @@ from analysis.market_breadth import (
     get_market_sentiment, analyze_open_interest_trends,
 )
 from analysis.signals import generate_trade_signals, format_signal_for_display
+import snapshot_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -110,6 +111,9 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+# Initialize the option-chain snapshot store (ATM straddle / IV history)
+snapshot_store.init_db()
 
 
 # ---------------------------------------------------------------------------
@@ -3030,6 +3034,115 @@ async def stock_fo_picks():
         "mode":      "live" if client.is_authenticated() else "mock",
         "summary":   summary,
         "stocks":    results,
+    }))
+
+
+def _capture_straddle(index: str):
+    """Compute current ATM straddle + IV + OI for an index from the chain."""
+    index = index.upper()
+    expiry = get_nearest_expiry(index).strftime("%Y-%m-%d")
+    dte = max(days_to_expiry(expiry), 0)
+    chain, spot = _get_option_chain_list(index, expiry)
+    atm = get_atm_strike(spot, index)
+    row = next((r for r in chain if r.get("strike") == atm), None)
+    ce_ltp = float((row.get("CE") or {}).get("ltp") or 0) if row else 0
+    pe_ltp = float((row.get("PE") or {}).get("ltp") or 0) if row else 0
+    if not ce_ltp or not pe_ltp:
+        est = round(spot * 0.005 * math.sqrt(max(dte, 1)), 1)
+        ce_ltp = ce_ltp or est
+        pe_ltp = pe_ltp or est
+    straddle = round(ce_ltp + pe_ltp, 2)
+    # Back out ATM IV from the straddle: straddle ≈ spot·IV·√(T)·0.8
+    t = max(dte, 1) / 365.0
+    atm_iv = round(straddle / (spot * math.sqrt(t) * 0.8) * 100, 1) if spot else 0
+    total_ce_oi = sum((r.get("CE") or {}).get("oi", 0) or 0 for r in chain)
+    total_pe_oi = sum((r.get("PE") or {}).get("oi", 0) or 0 for r in chain)
+    pcr = round(total_pe_oi / total_ce_oi, 3) if total_ce_oi else 1.0
+    return {
+        "spot": round(spot, 2), "atm": atm, "expiry": expiry, "dte": dte,
+        "ce_ltp": round(ce_ltp, 2), "pe_ltp": round(pe_ltp, 2), "straddle": straddle,
+        "atm_iv": atm_iv, "total_ce_oi": total_ce_oi, "total_pe_oi": total_pe_oi, "pcr": pcr,
+    }
+
+
+@app.get("/api/straddle/{index}")
+async def straddle_tracker(index: str):
+    """
+    ATM straddle (CE+PE) tracker — the 'is today a buying day?' filter — plus
+    an IV percentile / IV-crush warning. Uses stored intraday snapshots when
+    available; synthesizes a session series otherwise.
+    """
+    index = index.upper()
+    cur = _capture_straddle(index)
+    snapshot_store.record(index, cur)  # throttled
+
+    # ── Build today's straddle series ─────────────────────────
+    rows = snapshot_store.today_series(index)
+    series = []
+    source = "live"
+    if len(rows) >= 3:
+        for r in rows:
+            ts = datetime.fromisoformat(r["ts"])
+            series.append({"time": ts.strftime("%H:%M"),
+                           "straddle": round(r["straddle"] or 0, 2),
+                           "iv": round(r["atm_iv"] or 0, 1)})
+    else:
+        # Synthesize an intraday decay curve anchored to the current straddle
+        source = "simulated"
+        import datetime as _dt
+        today = _dt.date.today()
+        rng = np.random.default_rng(int(today.strftime("%Y%m%d")) + sum(ord(c) for c in index))
+        start = _dt.datetime(today.year, today.month, today.day, 9, 15)
+        end   = _dt.datetime(today.year, today.month, today.day, 15, 30)
+        slots, t = [], start
+        while t <= end:
+            slots.append(t); t += _dt.timedelta(minutes=15)
+        n = len(slots)
+        cur_straddle = cur["straddle"]
+        open_straddle = cur_straddle * (1.12 + float(rng.normal(0, 0.03)))  # higher at open
+        for i, slot in enumerate(slots):
+            frac = i / max(n - 1, 1)
+            val = open_straddle + frac * (cur_straddle - open_straddle) \
+                  + float(rng.normal(0, cur_straddle * 0.01))
+            iv_v = cur["atm_iv"] * (1 + (1 - frac) * 0.08) + float(rng.normal(0, 0.3))
+            series.append({"time": slot.strftime("%H:%M"),
+                           "straddle": round(max(val, 1), 2), "iv": round(iv_v, 1)})
+
+    open_s = series[0]["straddle"] if series else cur["straddle"]
+    now_s  = series[-1]["straddle"] if series else cur["straddle"]
+    chg_pct = round((now_s - open_s) / open_s * 100, 2) if open_s else 0
+
+    # ── IV percentile + crush warning ─────────────────────────
+    iv_pctile = snapshot_store.iv_percentile(index, cur["atm_iv"])
+    if iv_pctile is None:
+        # No stored history yet — approximate band from the IV level itself
+        iv_pctile = round(max(0, min(100, (cur["atm_iv"] - 10) / 20 * 100)), 0)
+        iv_pctile_src = "estimated"
+    else:
+        iv_pctile_src = "history"
+
+    # ── Verdict for option BUYERS ─────────────────────────────
+    if chg_pct <= -8:
+        verdict, vcolor = "THETA CRUSH — avoid buying options (straddle bleeding)", "red"
+    elif chg_pct >= 8:
+        verdict, vcolor = "EXPANSION — real move underway, buy the direction", "green"
+    else:
+        verdict, vcolor = "RANGEBOUND — premiums flat, weak day for option buying", "yellow"
+    iv_warning = None
+    if iv_pctile >= 70:
+        iv_warning = (f"IV {cur['atm_iv']}% at {iv_pctile:.0f}th percentile — premiums inflated; "
+                      "prefer spreads over naked CE/PE buys (IV-crush risk).")
+    elif iv_pctile <= 25:
+        iv_warning = (f"IV {cur['atm_iv']}% at {iv_pctile:.0f}th percentile — premiums cheap; "
+                      "favourable for buying options if a move is expected.")
+
+    return JSONResponse(sanitize({
+        "index": index, "spot": cur["spot"], "atm": cur["atm"], "expiry": cur["expiry"],
+        "dte": cur["dte"], "ce_ltp": cur["ce_ltp"], "pe_ltp": cur["pe_ltp"],
+        "straddle_now": now_s, "straddle_open": open_s, "straddle_chg_pct": chg_pct,
+        "atm_iv": cur["atm_iv"], "iv_percentile": iv_pctile, "iv_pctile_src": iv_pctile_src,
+        "verdict": verdict, "verdict_color": vcolor, "iv_warning": iv_warning,
+        "source": source, "series": series, "now_ist": datetime.now().strftime("%H:%M:%S"),
     }))
 
 

@@ -135,6 +135,7 @@ GEX (gamma exposure by strike), OI heatmap, IV surface, Multi-Timeframe alignmen
 - **Right panels:** CE/PE/Net OI time-series + PCR time-series (Chart.js).
 - **Crosshair sync:** hovering the price chart highlights the same time point on the OI and PCR charts with tooltips.
 - Index/expiry/interval/live-historical controls; strike-wise CE-PE ratio interpretation (RESISTANCE / SUPPORT / CALL WRITING / PUT WRITING / BOTH ADDING / UNWINDING) via `/api/smart-oi`.
+- **ATM Straddle Tracker** (`/api/straddle/{index}`) — the "is today a buying day?" filter. Charts the ATM CE+PE combined premium and ATM IV through the session, with a verdict (THETA CRUSH → avoid buying · EXPANSION → buy the direction · RANGEBOUND → weak day) and an **IV percentile + IV-crush warning** (high percentile → "premiums inflated, prefer spreads"). Backed by `snapshot_store.py` (SQLite) which records straddle/IV/OI/PCR snapshots (throttled to ~150 s); uses real stored snapshots once ≥3 exist for the day, otherwise a synthesized decay series. ATM IV is backed out from the straddle: `IV ≈ straddle ÷ (spot · √(DTE/365) · 0.8)`.
 
 ### 4.10 🏆 Stock F&O Picks (`/api/stock-fo-picks`)
 **10 stocks:** RELIANCE, HDFCBANK, ICICIBANK, INFY, TCS, SBIN, BHARTIARTL, AXISBANK, KOTAKBANK, LT. Live mode pulls real futures contracts (lot size, OI), the near-expiry option chain around ATM, daily futures candles for technicals, and the day VWAP; deterministic per-day mock otherwise.

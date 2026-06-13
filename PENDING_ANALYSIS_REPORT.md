@@ -39,7 +39,7 @@
 - **Where:** Algo rule (±1), dashboard "Today's key levels" card, chart lines.
 - **Effort:** Low.
 
-### 2.4 ATM Straddle price tracker
+### 2.4 ATM Straddle price tracker — ✅ ADDED 13 Jun 2026 (Smart OI tab: straddle+IV chart, verdict, SQLite snapshots)
 - **What:** ATM CE + PE combined premium through the day. Straddle falling = theta crush / rangebound (don't buy options); straddle rising with price move = real breakout (buy the direction).
 - **Why:** Experts use straddle charts to decide *whether to buy options at all today* — the missing "is this a buying day?" filter.
 - **Where:** New panel in Smart OI tab + a "premium environment" flag in Algo.
@@ -82,7 +82,7 @@
 |---|---|---|
 | 4.1 | **Real FII/DII feed** | Currently simulated even when logged in — sentiment gauge partially mock. NSE publishes daily; scrape or manual entry. |
 | 4.2 | **Real advance/decline** | Simulated. Compute from NSE 500 quotes when authenticated. |
-| 4.3 | **Option chain history persistence** | OI History tab is synthetic. Start snapshotting the live chain (e.g. every 15 min to SQLite) — enables real OI-change analytics, IV history (2.6), straddle history (2.4). |
+| 4.3 | **Option chain history persistence** | ✅ PARTIAL 13 Jun 2026 — `snapshot_store.py` (SQLite) now records ATM straddle / IV / OI / PCR (throttled) via the straddle endpoint; feeds the straddle tracker & IV percentile. Still to do: full strike-chain snapshots for the OI History tab. |
 | 4.4 | **Strategy-level backtesting** | Only the Algo direction is backtested. No win-rate per rule (EMA cross vs Supertrend vs ORB) — needed to know which analyses actually earn. |
 | 4.5 | **Alerts** | No push/Telegram/sound when a signal fires — experts don't watch screens; they get alerted. |
 

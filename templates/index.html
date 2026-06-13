@@ -1454,6 +1454,24 @@
         </div>
       </div><!-- end two-panel -->
 
+      <!-- ATM Straddle Tracker + IV-crush warning -->
+      <div class="card mt-3" id="straddle-card">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
+          <span style="font-size:13px;font-weight:700;color:var(--text-bright);">⚖️ ATM Straddle Tracker</span>
+          <span style="font-size:11px;color:var(--text-muted);">CE+PE premium — is today a buying day?</span>
+          <span id="straddle-verdict" class="badge medium"></span>
+          <span id="straddle-source" style="font-size:10px;color:var(--text-muted);"></span>
+        </div>
+        <div id="straddle-iv-warning" style="display:none;margin-bottom:8px;padding:7px 10px;border-radius:6px;font-size:11px;"></div>
+        <div class="grid-4 gap-3" id="straddle-stats" style="margin-bottom:10px;"></div>
+        <div style="position:relative;height:200px;">
+          <canvas id="straddle-chart"></canvas>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:8px;line-height:1.5;">
+          Falling straddle = theta crush / rangebound → poor day to <b>buy</b> options. Rising straddle with a price move = real expansion → buy the direction. High IV percentile warns of IV-crush risk on naked buys.
+        </div>
+      </div>
+
     </div><!-- end tab-smart-oi -->
 
     <!-- ===== STOCK F&O PICKS TAB ===== -->
@@ -1664,7 +1682,7 @@ function switchTab(tab) {
   if (tab === 'oi-history')   initOIHistoryTab();
   if (tab === 'algo')       { loadAlgo(); calcPositionSize(); }
   if (tab === 'advanced')     loadAdvanced();
-  if (tab === 'smart-oi')    { populateSOIExpiry(); loadSmartOI(); }
+  if (tab === 'smart-oi')    { populateSOIExpiry(); loadSmartOI(); loadStraddle(); }
   if (tab === 'stock-picks')  loadStockPicks();
   if (tab === 'time-span')    loadTimeSpan();
 }
@@ -3214,6 +3232,61 @@ function renderAlgoBlock(d, idx) {
   </div>`;
 }
 
+// ── ATM Straddle Tracker ────────────────────────────────────
+let straddleChart = null;
+async function loadStraddle() {
+  try {
+    const idx = (typeof soiIndexState !== 'undefined') ? soiIndexState : 'NIFTY';
+    const d = await fetch(`/api/straddle/${idx}`).then(r => r.json());
+
+    const vc = d.verdict_color === 'green' ? 'high' : d.verdict_color === 'red' ? 'low' : 'medium';
+    const vb = document.getElementById('straddle-verdict');
+    vb.className = 'badge ' + vc;
+    vb.textContent = d.verdict;
+    document.getElementById('straddle-source').textContent =
+      (d.source === 'simulated' ? '(simulated series — accrues real data through the day)' : '(live snapshots)') + ' · ' + d.now_ist;
+
+    const warn = document.getElementById('straddle-iv-warning');
+    if (d.iv_warning) {
+      warn.style.display = 'block';
+      const hi = d.iv_percentile >= 70;
+      warn.style.background = hi ? 'rgba(255,71,87,0.08)' : 'rgba(0,217,100,0.08)';
+      warn.style.color = hi ? 'var(--red)' : 'var(--green)';
+      warn.innerHTML = (hi ? '⚠ ' : '✓ ') + d.iv_warning;
+    } else { warn.style.display = 'none'; }
+
+    const chgColor = d.straddle_chg_pct < 0 ? 'var(--red)' : d.straddle_chg_pct > 0 ? 'var(--green)' : 'var(--yellow)';
+    const card = (l, v, s, c) => `<div class="metric-card"><div class="metric-label">${l}</div><div class="metric-value" style="${c?'color:'+c:''}">${v}</div><div class="metric-sub">${s}</div></div>`;
+    document.getElementById('straddle-stats').innerHTML =
+      card('Straddle Now', '₹' + fmt(d.straddle_now, 1), `${d.atm} CE+PE`, '') +
+      card('Day Change', `${d.straddle_chg_pct >= 0 ? '+' : ''}${fmt(d.straddle_chg_pct,1)}%`, `from ₹${fmt(d.straddle_open,1)} open`, chgColor) +
+      card('ATM IV', fmt(d.atm_iv,1) + '%', `${d.dte}d to expiry`, '') +
+      card('IV Percentile', Math.round(d.iv_percentile) + 'th', d.iv_pctile_src === 'history' ? 'vs stored history' : 'estimated (building history)', d.iv_percentile >= 70 ? 'var(--red)' : d.iv_percentile <= 25 ? 'var(--green)' : '');
+
+    const labels = d.series.map(p => p.time);
+    if (straddleChart) { straddleChart.destroy(); straddleChart = null; }
+    straddleChart = new Chart(document.getElementById('straddle-chart').getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets: [
+        { label: 'Straddle', data: d.series.map(p => p.straddle), yAxisID: 'y',
+          borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.10)', borderWidth: 2, pointRadius: 0, tension: 0.3, fill: true },
+        { label: 'ATM IV %', data: d.series.map(p => p.iv), yAxisID: 'y1',
+          borderColor: '#f59e0b', borderWidth: 1.4, borderDash: [4,3], pointRadius: 0, tension: 0.3, fill: false },
+      ]},
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { labels: { color: chartTheme().textMain, font: { size: 10 }, boxWidth: 12 } } },
+        scales: {
+          x: { ticks: { color: chartTheme().text, font: { size: 9 }, maxTicksLimit: 10, maxRotation: 0 }, grid: { color: chartTheme().grid } },
+          y:  { position: 'left',  ticks: { color: chartTheme().text, font: { size: 9 }, callback: v => '₹'+v }, grid: { color: chartTheme().grid } },
+          y1: { position: 'right', ticks: { color: '#f59e0b', font: { size: 9 }, callback: v => v+'%' }, grid: { drawOnChartArea: false } },
+        },
+      },
+    });
+  } catch(e) { console.error('Straddle error:', e); }
+}
+
 // ── Position Sizing Calculator ──────────────────────────────
 function calcPositionSize() {
   const capital = parseFloat(document.getElementById('ps-capital').value) || 0;
@@ -3846,6 +3919,7 @@ function setSOIIndex(idx) {
   if (soiLWChart) { soiLWChart.remove(); soiLWChart = null; soiCandleSeries = null; soiVolumeSeries = null; }
   populateSOIExpiry();
   loadSmartOI();
+  loadStraddle();
 }
 
 function setSOIInterval(iv) {
